@@ -1,6 +1,11 @@
-data/raw
-data/streaming
-data/training
+data/raw/*
+data/streaming/*
+data/training/*
+
+!data/raw/.gitkeep
+!data/streaming/.gitkeep
+!data/training/.gitkeep
+
 .env
 venv
 pulse_data.zip
