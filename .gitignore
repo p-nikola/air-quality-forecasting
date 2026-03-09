@@ -1,4 +1,8 @@
-pulse_data
+data/raw
+data/streaming
+data/training
 .env
 venv
 pulse_data.zip
+__pycache__/
+*.pyc
