@@ -10,4 +10,4 @@ data/training/*
 venv
 pulse_data.zip
 __pycache__/
-*.pyc
+*.pycOffline-Phase/my_chronos_pipeline_pm10/model.safetensors
