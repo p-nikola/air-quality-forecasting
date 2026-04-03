@@ -10,6 +10,9 @@ no2
 co
 o3
 wind_speed
+rawSensorWeatherData
+FullPm10WeatherData
+FullPm25WeatherData
 )
 
 for topic in "${topics[@]}"
