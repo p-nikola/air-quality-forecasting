@@ -6,9 +6,7 @@ from kafka import KafkaProducer
 if __name__ == "__main__":
 
     df = pd.read_csv("data/raw/bitola_sensor_weather_features_online.csv")
-    context = pd.read_csv("Online-Phase/Context_pm10_bitola.csv")
-    valid_ids = context['sensorId'].unique()
-    df = df[df['sensorId'].isin(valid_ids)]
+    
     df["timestamp"] = pd.to_datetime(df["timestamp"])
 
 

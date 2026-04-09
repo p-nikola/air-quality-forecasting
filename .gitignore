@@ -16,4 +16,6 @@ Offline-Phase/my_chronos_pipeline_pm10/model.safetensors
 Offline-Phase/my_chronos_pipeline_pm25/model.safetensors
 .idea
 data.zip
-.cache.sqlite
+.cache.sqlitemodel.safetensors
+*.safetensors
+model.safetensors
