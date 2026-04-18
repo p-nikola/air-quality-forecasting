@@ -24,7 +24,14 @@ services:
       KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
       KAFKA_LOG_DIRS: /var/lib/kafka/data
       CLUSTER_ID: MkU3OEVBNTcwNTJENDM2Qk
+      
+    networks:
+      - shared_net
 
 
 volumes:
   kafka_data:
+
+networks:
+  shared_net:
+    name: shared_net

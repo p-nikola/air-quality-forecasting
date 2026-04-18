@@ -2,16 +2,25 @@ import json
 import time
 import pandas as pd
 from kafka import KafkaProducer
+import os
+from pathlib import Path
 
 if __name__ == "__main__":
 
-    df = pd.read_csv("../data/raw/bitola_sensor_weather_features_online.csv")
+    base_dir = Path(__file__).resolve().parents[2]
+    default_data_path = base_dir / "data" / "raw" / "bitola_sensor_weather_features_online.csv"
+    data_path = Path(os.getenv("BITOLA_DATA_CSV_PATH", str(default_data_path))).expanduser()
+
+    if not data_path.exists():
+        raise FileNotFoundError(f"Input CSV not found at: {data_path}")
+
+    df = pd.read_csv(data_path)
     df["timestamp"] = pd.to_datetime(df["timestamp"])
 
     df = df.sort_values(["timestamp", "sensorId"])
 
     producer = KafkaProducer(
-        bootstrap_servers='localhost:9092',
+        bootstrap_servers= os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092"),
         security_protocol="PLAINTEXT"
     )
 

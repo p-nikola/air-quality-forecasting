@@ -1,0 +1,43 @@
+services:
+
+  producer:
+    build:
+      context: ../..
+      dockerfile: docker/bitola/Dockerfile.producer
+    depends_on:
+      - spark
+    command: ["sh", "-c", "sleep 10 && python app/bitola/producer.py"]
+    networks:
+      - shared_net
+    volumes:
+      - ../..:/app
+    environment:
+      - KAFKA_BOOTSTRAP_SERVERS=kafka:29092
+
+  spark:
+    build:
+      context: ../..
+      dockerfile: docker/bitola/Dockerfile.spark
+    networks:
+      - shared_net
+    volumes:
+      - ../..:/app
+    environment:
+      - KAFKA_BOOTSTRAP_SERVERS=kafka:29092
+
+  streamlit:
+    build:
+      context: ../..
+      dockerfile: docker/bitola/Dockerfile.streamlit
+    ports:
+      - "8501:8501"
+    networks:
+      - shared_net
+    volumes:
+      - ../..:/app
+    environment:
+      - KAFKA_BOOTSTRAP_SERVERS=kafka:29092
+
+networks:
+  shared_net:
+    external: true

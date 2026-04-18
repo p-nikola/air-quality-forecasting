@@ -1,0 +1,17 @@
+.git
+.gitignore
+.vscode
+venv
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+*.ipynb_checkpoints
+
+# Large datasets and artifacts are mounted at runtime, not needed in image build context
+data
+offline-Phase
+notebooks
+
+# Local/runtime outputs
+*.log
