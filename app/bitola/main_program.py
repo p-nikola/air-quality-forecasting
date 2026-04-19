@@ -252,6 +252,11 @@ def foreach_batch(batch_df, epoch_id):
         print(f"\nProcessing timestamp: {ts}")
         print(f"Sensor count: {len(ts_df)}")
 
+        context_max_ts = pd.to_datetime(context_df["timestamp"], utc=True).max() if not context_df.empty else None
+        if context_max_ts is not None and pd.to_datetime(ts, utc=True) <= context_max_ts:
+            print(f"Skipping timestamp {ts} because it is not after context max {context_max_ts}")
+            continue
+
         incoming_ids = set(ts_df['sensorId'].unique())
         existing_ids = set(context_df['sensorId'].unique()) if not context_df.empty else set()
         new_ids = incoming_ids - existing_ids
@@ -303,6 +308,7 @@ def foreach_batch(batch_df, epoch_id):
         context_df = (
             context_df
             .sort_values(["sensorId", "timestamp"])
+            .drop_duplicates(subset=["sensorId", "timestamp"], keep="last")
             .groupby("sensorId")
             .tail(72)
             .reset_index(drop=True)

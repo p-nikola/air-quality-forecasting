@@ -6,7 +6,7 @@ services:
       dockerfile: docker/bitola/Dockerfile.producer
     depends_on:
       - spark
-    command: ["sh", "-c", "sleep 10 && python app/bitola/producer.py"]
+    command: ["sh", "-c", "sleep 30 && python app/bitola/producer.py"]
     networks:
       - shared_net
     volumes:
@@ -18,6 +18,7 @@ services:
     build:
       context: ../..
       dockerfile: docker/bitola/Dockerfile.spark
+    command: ["python", "-u", "app/bitola/main_program.py"]
     networks:
       - shared_net
     volumes:

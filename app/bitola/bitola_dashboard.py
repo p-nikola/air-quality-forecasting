@@ -34,6 +34,9 @@ def normalize_row(row, topic):
     if "timestamp" in row:
         row["timestamp"] = pd.to_datetime(row["timestamp"], utc=True, errors="coerce")
 
+    if "sensorId" in row:
+        row["sensorId"] = str(row["sensorId"])
+
     row["topic"] = topic
 
     if topic == PM10_TOPIC:
@@ -45,6 +48,8 @@ def normalize_row(row, topic):
     else:
         row["metric"] = "unknown"
         row["value"] = None
+
+    row["value"] = pd.to_numeric(row["value"], errors="coerce")
 
     return row
 
@@ -106,6 +111,10 @@ if df.empty:
     st.info("No data received yet from Kafka topics.")
 else:
     df = df.dropna(subset=["timestamp"])
+    if "sensorId" in df.columns:
+        df["sensorId"] = df["sensorId"].astype(str)
+    if "value" in df.columns:
+        df["value"] = pd.to_numeric(df["value"], errors="coerce")
     df = df.sort_values("timestamp")
 
     # -------------------------
@@ -172,7 +181,7 @@ else:
                 title=f"Bitola {selected_metric.upper()} predictions over time"
             )
 
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width="stretch")
 
         # -------------------------
         # Tables
@@ -190,14 +199,14 @@ else:
             st.subheader("Latest records")
             st.dataframe(
                 metric_df[["timestamp", "sensorId", "metric", "value"]].tail(20),
-                use_container_width=True
+                width="stretch"
             )
 
         with col_right:
             st.subheader("Latest per sensor")
             st.dataframe(
                 latest_per_sensor[["sensorId", "timestamp", "metric", "value"]],
-                use_container_width=True
+                width="stretch"
             )
 
 
