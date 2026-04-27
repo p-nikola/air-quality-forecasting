@@ -11,6 +11,9 @@ st.title("Bitola Air Quality Dashboard")
 
 PM10_TOPIC = "FullPm10WeatherData"
 PM25_TOPIC = "FullPm25WeatherData"
+PM10_ZERO_SHOT_TOPIC = "FullPm10WeatherData_ZeroShot"
+PM25_ZERO_SHOT_TOPIC = "FullPm25WeatherData_ZeroShot"
+ALL_TOPICS = [PM10_TOPIC, PM25_TOPIC, PM10_ZERO_SHOT_TOPIC, PM25_ZERO_SHOT_TOPIC]
 BOOTSTRAP_SERVERS = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092")
 MAX_POINTS = 1000
 
@@ -18,8 +21,7 @@ MAX_POINTS = 1000
 @st.cache_resource
 def create_consumer():
     return KafkaConsumer(
-        PM10_TOPIC,
-        PM25_TOPIC,
+        *ALL_TOPICS,
         bootstrap_servers=BOOTSTRAP_SERVERS,
         value_deserializer=lambda x: json.loads(x.decode("utf-8")),
         auto_offset_reset="latest",
@@ -41,12 +43,23 @@ def normalize_row(row, topic):
 
     if topic == PM10_TOPIC:
         row["metric"] = "pm10"
+        row["model"] = "fine_tuned"
         row["value"] = row.get("pm10")
     elif topic == PM25_TOPIC:
         row["metric"] = "pm25"
+        row["model"] = "fine_tuned"
+        row["value"] = row.get("pm25")
+    elif topic == PM10_ZERO_SHOT_TOPIC:
+        row["metric"] = "pm10"
+        row["model"] = "zero_shot"
+        row["value"] = row.get("pm10")
+    elif topic == PM25_ZERO_SHOT_TOPIC:
+        row["metric"] = "pm25"
+        row["model"] = "zero_shot"
         row["value"] = row.get("pm25")
     else:
         row["metric"] = "unknown"
+        row["model"] = "unknown"
         row["value"] = None
 
     row["value"] = pd.to_numeric(row["value"], errors="coerce")
@@ -79,15 +92,18 @@ consumer = create_consumer()
 # -------------------------
 # Controls
 # -------------------------
-col1, col2, col3 = st.columns(3)
+col1, col2, col3, col4 = st.columns(4)
 
 with col1:
     selected_metric = st.selectbox("Metric", ["pm10", "pm25", "both"])
 
 with col2:
-    auto_refresh = st.toggle("Auto refresh", value=True)
+    selected_model = st.selectbox("Model", ["fine_tuned", "zero_shot", "both"])
 
 with col3:
+    auto_refresh = st.toggle("Auto refresh", value=True)
+
+with col4:
     refresh_now = st.button("Refresh now")
 
 
@@ -125,6 +141,9 @@ else:
     else:
         metric_df = df[df["metric"] == selected_metric].copy()
 
+    if selected_model != "both":
+        metric_df = metric_df[metric_df["model"] == selected_model].copy()
+
     if metric_df.empty:
         st.warning(f"No data available.")
     else:
@@ -159,24 +178,32 @@ else:
         metric_df = metric_df.sort_values("timestamp")
 
         if selected_metric == "both":
-            metric_df["label"] = metric_df["sensorId"].astype(str) + " - " + metric_df["metric"]
+            metric_df["label"] = (
+                metric_df["sensorId"].astype(str)
+                + " - "
+                + metric_df["metric"]
+                + " - "
+                + metric_df["model"]
+            )
 
             fig = px.line(
                 metric_df,
                 x="timestamp",
                 y="value",
                 color="label",
-                line_dash="metric", 
+                line_dash="metric",
                 markers=True,
-                title="PM10 (solid) vs PM25 (dotted)"
+                title="Bitola predictions by metric and model"
             )
 
         else:
+            metric_df["label"] = metric_df["sensorId"].astype(str) + " - " + metric_df["model"]
             fig = px.line(
                 metric_df,
                 x="timestamp",
                 y="value",
-                color="sensorId",
+                color="label",
+                line_dash="model",
                 markers=True,
                 title=f"Bitola {selected_metric.upper()} predictions over time"
             )
@@ -198,14 +225,14 @@ else:
         with col_left:
             st.subheader("Latest records")
             st.dataframe(
-                metric_df[["timestamp", "sensorId", "metric", "value"]].tail(20),
+                metric_df[["timestamp", "sensorId", "model", "metric", "value"]].tail(20),
                 width="stretch"
             )
 
         with col_right:
             st.subheader("Latest per sensor")
             st.dataframe(
-                latest_per_sensor[["sensorId", "timestamp", "metric", "value"]],
+                latest_per_sensor[["sensorId", "timestamp", "model", "metric", "value"]],
                 width="stretch"
             )
 

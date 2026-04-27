@@ -1,6 +1,6 @@
 #!/bin/bash
 
-for topic in FullPm10WeatherData FullPm25WeatherData
+for topic in FullPm10WeatherData FullPm25WeatherData FullPm10WeatherData_ZeroShot FullPm25WeatherData_ZeroShot
 do
   
   docker exec kafka /opt/kafka/bin/kafka-topics.sh \

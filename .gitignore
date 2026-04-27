@@ -19,3 +19,4 @@ data.zip
 .cache.sqlitemodel.safetensors
 *.safetensors
 model.safetensors
+.codex
