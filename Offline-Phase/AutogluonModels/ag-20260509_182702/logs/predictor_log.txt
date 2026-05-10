@@ -1,0 +1,57 @@
+Beginning AutoGluon training... Time limit = 300s
+AutoGluon will save models to '/Users/jovan/Documents/Kodovi/RNMP/Project/Offline-Phase/AutogluonModels/ag-20260509_182702'
+=================== System Info ===================
+AutoGluon Version:  1.5.0
+Python Version:     3.11.9
+Operating System:   Darwin
+Platform Machine:   arm64
+Platform Version:   Darwin Kernel Version 25.3.0: Wed Jan 28 20:54:55 PST 2026; root:xnu-12377.91.3~2/RELEASE_ARM64_T8132
+CPU Count:          10
+Pytorch Version:    2.9.1
+CUDA Version:       CUDA is not available
+GPU Count:          WARNING: Exception was raised when calculating GPU count (AssertionError)
+Memory Avail:       5.32 GB / 16.00 GB (33.2%)
+Disk Space Avail:   106.70 GB / 228.27 GB (46.7%)
+===================================================
+Setting presets to: chronos2
+
+Fitting with arguments:
+{'enable_ensemble': True,
+ 'eval_metric': MASE,
+ 'hyperparameters': {'Chronos2': {'model_path': 'autogluon/chronos-2'}},
+ 'known_covariates_names': [],
+ 'num_val_windows': 1,
+ 'prediction_length': 512,
+ 'quantile_levels': [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9],
+ 'random_seed': 123,
+ 'refit_every_n_windows': 1,
+ 'refit_full': False,
+ 'skip_model_selection': True,
+ 'target': 'pm25',
+ 'time_limit': 300,
+ 'verbosity': 2}
+
+Inferred time series frequency: 'h'
+Provided train_data has 187352 rows (NaN fraction=23.0%), 11 time series. Median time series length is 17032 (min=17032, max=17032). 
+
+Provided data contains following columns:
+	target: 'pm25'
+	past_covariates:
+		categorical:        []
+		continuous (float): ['humidity', 'pm10', 'pressure', 'temperature', 'wind_speed', 'neighbor1_humidity', ...]
+
+To learn how to fix incorrectly inferred types, please see documentation for TimeSeriesPredictor.fit
+
+AutoGluon will gauge predictive performance using evaluation metric: 'MASE'
+	This metric's sign has been flipped to adhere to being higher_is_better. The metric score can be multiplied by -1 to get the metric value.
+===================================================
+
+Starting training. Start time is 2026-05-09 20:27:12
+Models that will be trained: ['Chronos2']
+Training timeseries model Chronos2. Training for up to 299.9s of the 299.9s of remaining time.
+	2.63    s     = Training runtime
+Training complete. Models trained: ['Chronos2']
+Total runtime: 2.64 s
+Best model: Chronos2
+Model not specified in predict, will default to the model with the best validation score: Chronos2
+Model not specified in predict, will default to the model with the best validation score: Chronos2

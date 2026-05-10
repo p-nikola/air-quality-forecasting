@@ -2,7 +2,7 @@ from kafka import KafkaConsumer
 
 # Kafka configuration
 bootstrap_servers = 'localhost:9092'
-topic = 'FullPm10WeatherData' # FullPm10WeatherData
+topic = 'FullPm10WeatherData_ZeroShot' # FullPm10WeatherData
 
 # Create a Kafka consumer
 consumer = KafkaConsumer(topic,
