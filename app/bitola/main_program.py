@@ -1,4 +1,3 @@
-import joblib
 import os
 from pathlib import Path
 
@@ -7,6 +6,7 @@ import numpy as np
 import pandas as pd
 import pyspark as spark
 import torch
+from autogluon.timeseries import TimeSeriesDataFrame, TimeSeriesPredictor
 from chronos import Chronos2Pipeline
 from pyspark.sql import SparkSession
 from pyspark.sql.functions import col, collect_list, count, from_json, struct, to_json, to_timestamp
@@ -18,9 +18,12 @@ BASE_DIR = Path(__file__).resolve().parents[2]
 OFFLINE_DIR = BASE_DIR / "offline-Phase"
 DEFAULT_CONTEXT_PATH = Path(__file__).resolve().parent / "context_bitola.csv"
 CONTEXT_PATH = Path(os.getenv("BITOLA_CONTEXT_CSV_PATH", str(DEFAULT_CONTEXT_PATH))).expanduser()
+DEFAULT_FORECAST_PATH = BASE_DIR / "data" / "raw" / "bitola_forecast_weather.csv"
+FORECAST_PATH = Path(os.getenv("BITOLA_FORECAST_CSV_PATH", str(DEFAULT_FORECAST_PATH))).expanduser()
 ZERO_SHOT_DIR = Path(
     os.getenv("BITOLA_ZERO_SHOT_MODEL_PATH", str(OFFLINE_DIR / "chronos2_zero_shot"))
 ).expanduser()
+PREDICTION_HOURS = 24
 
 PM10_TOPIC = "FullPm10WeatherData"
 PM25_TOPIC = "FullPm25WeatherData"
@@ -29,15 +32,19 @@ PM25_ZERO_SHOT_TOPIC = "FullPm25WeatherData_ZeroShot"
 
 if not CONTEXT_PATH.exists():
     raise FileNotFoundError(f"Context CSV not found at: {CONTEXT_PATH}")
+if not FORECAST_PATH.exists():
+    raise FileNotFoundError(f"Forecast weather CSV not found at: {FORECAST_PATH}")
 
-pipeline_pm10 = Chronos2Pipeline.from_pretrained(
-    str(OFFLINE_DIR / "bitola_chronos_pipeline_pm10"),
-    local_files_only=True,
-)
-pipeline_pm25 = Chronos2Pipeline.from_pretrained(
-    str(OFFLINE_DIR / "bitola_chronos_pipeline_pm25"),
-    local_files_only=True,
-)
+def load_predictor(path):
+    predictor = TimeSeriesPredictor.load(path=str(path))
+    trainer = predictor._learner.load_trainer()
+    trainer.prediction_cache.root_path = Path(trainer.path)
+    return predictor
+
+
+pm10_predictor = load_predictor(OFFLINE_DIR / "chronos2_model_pm10_bitola")
+pm25_predictor = load_predictor(OFFLINE_DIR / "chronos2_model_pm25_bitola")
+print("Loaded fine-tuned PM10 and PM2.5 AutoGluon predictors")
 
 if ZERO_SHOT_DIR.exists():
     chronos2_pipeline = Chronos2Pipeline.from_pretrained(
@@ -52,11 +59,6 @@ else:
         dtype=torch.bfloat16,
     )
     print(f"Loaded zero-shot model from {chronos2_pipeline}")
-
-feature_scaler = joblib.load(OFFLINE_DIR / "feature_scaler.pkl")
-pm10_scaler_obj = joblib.load(OFFLINE_DIR / "pm10_scaler.pkl")
-pm25_scaler_obj = joblib.load(OFFLINE_DIR / "pm25_scaler.pkl")
-
 
 def extract_time_features(df, timestamp_col="timestamp"):
     df["hour_sin"] = np.sin(2 * np.pi * df[timestamp_col].dt.hour / 24)
@@ -147,36 +149,87 @@ def load_context():
     return context_df
 
 
-def predict_target_fine_tuned(pdf, context_df, target, scaler, pipeline, id_col, time_col, numeric_features):
-    context_target = context_df.copy()
-    context_target[target] = scaler.transform(context_target[[target]])
+def load_forecast():
+    forecast_df = pd.read_csv(FORECAST_PATH)
+    forecast_df["timestamp"] = pd.to_datetime(forecast_df["timestamp"], utc=True)
+    forecast_df["sensorId"] = forecast_df["sensorId"].astype(str)
+    forecast_df = extract_time_features(forecast_df)
+    forecast_df = append_neighbors(forecast_df, neighbourhood_matrix)
+    return forecast_df
 
-    forecast_df = pipeline.predict_df(
-        df=context_target,
-        prediction_length=1,
-        target=target,
+
+def build_future_df(ts_df, forecast_df):
+    ts_df = ts_df.copy()
+    forecast_df = forecast_df.copy()
+
+    ts_df["timestamp"] = pd.to_datetime(ts_df["timestamp"], utc=True)
+    forecast_df["timestamp"] = pd.to_datetime(forecast_df["timestamp"], utc=True)
+    ts_df["sensorId"] = ts_df["sensorId"].astype(str)
+    forecast_df["sensorId"] = forecast_df["sensorId"].astype(str)
+
+    future_rows = []
+    for sensor_id in ts_df["sensorId"].unique():
+        sensor_current = ts_df[ts_df["sensorId"] == sensor_id]
+        forecast_origin = sensor_current["timestamp"].max()
+        future_times = [
+            forecast_origin + pd.Timedelta(hours=horizon)
+            for horizon in range(1, PREDICTION_HOURS + 1)
+        ]
+
+        sensor_future = pd.DataFrame(
+            {
+                "sensorId": sensor_id,
+                "timestamp": future_times,
+                "forecast_origin": forecast_origin,
+                "horizon_hours": range(1, PREDICTION_HOURS + 1),
+            }
+        )
+        sensor_forecast = forecast_df[forecast_df["sensorId"] == sensor_id]
+        sensor_future = sensor_future.merge(
+            sensor_forecast,
+            on=["sensorId", "timestamp"],
+            how="left",
+        )
+        future_rows.append(sensor_future)
+
+    return pd.concat(future_rows, ignore_index=True)
+
+
+def predict_target_fine_tuned(pdf, context_df, target, predictor, id_col, time_col):
+    context_target = context_df.copy()
+    context_target[time_col] = pd.to_datetime(context_target[time_col], utc=True).dt.tz_convert(None)
+
+    data = TimeSeriesDataFrame.from_data_frame(
+        context_target,
         id_column=id_col,
-        future_df=pdf,
-        validate_inputs=False,
+        timestamp_column=time_col,
     )
+    predictions = predictor.predict(data, use_cache=False)
+    forecast_df = predictions.to_data_frame()
+
+    if isinstance(forecast_df.index, pd.MultiIndex):
+        forecast_df = forecast_df.reset_index()
+
+    forecast_df = forecast_df.rename(columns={"item_id": id_col, "mean": target})
+    forecast_df[time_col] = pd.to_datetime(forecast_df[time_col], utc=True)
 
     result_df = pdf.merge(
-        forecast_df[[id_col, time_col, "predictions"]],
+        forecast_df[[id_col, time_col, target]],
         on=[id_col, time_col],
         how="left",
     )
-    result_df[numeric_features] = feature_scaler.inverse_transform(result_df[numeric_features])
-    result_df["predictions"] = scaler.inverse_transform(result_df[["predictions"]])
-    return result_df.rename(columns={"predictions": target})
+    return result_df
 
 
 def predict_target_zero_shot(pdf, context_df, target, pipeline, id_col, time_col):
+    model_future_df = pdf.drop(columns=["forecast_origin", "horizon_hours"], errors="ignore")
+
     forecast_df = pipeline.predict_df(
         df=context_df,
-        prediction_length=1,
+        prediction_length=PREDICTION_HOURS,
         target=target,
         id_column=id_col,
-        future_df=pdf,
+        future_df=model_future_df,
         validate_inputs=False,
     )
 
@@ -214,30 +267,21 @@ def process_batch(pdf, context_df):
     context_sorted = context_df.copy().sort_values([id_col, time_col])
     print("Context max timestamp:", context_sorted[time_col].max())
 
-    fine_tuned_pdf = pdf.copy()
-    fine_tuned_context = context_sorted.copy()
-    fine_tuned_pdf[numeric_features] = feature_scaler.transform(fine_tuned_pdf[numeric_features])
-    fine_tuned_context[numeric_features] = feature_scaler.transform(fine_tuned_context[numeric_features])
-
     pm10_df = predict_target_fine_tuned(
-        fine_tuned_pdf,
-        fine_tuned_context,
+        pdf.copy(),
+        context_sorted.copy(),
         target="pm10",
-        scaler=pm10_scaler_obj,
-        pipeline=pipeline_pm10,
+        predictor=pm10_predictor,
         id_col=id_col,
         time_col=time_col,
-        numeric_features=numeric_features,
     )
     pm25_df = predict_target_fine_tuned(
-        fine_tuned_pdf,
-        fine_tuned_context,
+        pdf.copy(),
+        context_sorted.copy(),
         target="pm25",
-        scaler=pm25_scaler_obj,
-        pipeline=pipeline_pm25,
+        predictor=pm25_predictor,
         id_col=id_col,
         time_col=time_col,
-        numeric_features=numeric_features,
     )
 
     zero_shot_pdf = pdf.copy()
@@ -277,6 +321,10 @@ def write_to_kafka(df, topic):
 
 
 context_df = load_context()
+forecast_df = load_forecast()
+print(f"Loaded context rows: {len(context_df)}")
+print(f"Loaded forecast weather rows: {len(forecast_df)}")
+print("Models are ready for predictions. Waiting for Kafka sensor batches...")
 
 
 def foreach_batch(batch_df, epoch_id):
@@ -337,7 +385,8 @@ def foreach_batch(batch_df, epoch_id):
         ts_df = extract_time_features(ts_df)
         ts_df = append_neighbors(ts_df, neighbourhood_matrix)
 
-        pm10_df, pm25_df, pm10_zero_shot_df, pm25_zero_shot_df = process_batch(ts_df.copy(), context_df)
+        future_df = build_future_df(ts_df, forecast_df)
+        pm10_df, pm25_df, pm10_zero_shot_df, pm25_zero_shot_df = process_batch(future_df, context_df)
 
         write_to_kafka(pm10_df, PM10_TOPIC)
         write_to_kafka(pm25_df, PM25_TOPIC)

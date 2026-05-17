@@ -2,10 +2,16 @@ import json
 import time
 import pandas as pd
 from kafka import KafkaProducer
+from pathlib import Path
 
 if __name__ == "__main__":
 
-    df = pd.read_csv("data/raw/bitola_sensor_weather_features_online.csv")
+    SCRIPT_DIR = Path(__file__).resolve().parent
+    PROJECT_ROOT = SCRIPT_DIR.parent
+    DATA_PATH = PROJECT_ROOT / "data" / "raw" / "bitola_sensor_weather_features_online.csv"
+
+    df = pd.read_csv(DATA_PATH)
+
     df["timestamp"] = pd.to_datetime(df["timestamp"])
 
     df = df.sort_values(["timestamp", "sensorId"])

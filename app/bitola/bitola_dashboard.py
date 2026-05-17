@@ -15,7 +15,7 @@ PM10_ZERO_SHOT_TOPIC = "FullPm10WeatherData_ZeroShot"
 PM25_ZERO_SHOT_TOPIC = "FullPm25WeatherData_ZeroShot"
 ALL_TOPICS = [PM10_TOPIC, PM25_TOPIC, PM10_ZERO_SHOT_TOPIC, PM25_ZERO_SHOT_TOPIC]
 BOOTSTRAP_SERVERS = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092")
-MAX_POINTS = 1000
+MAX_POINTS = 24000
 
 
 @st.cache_resource
@@ -35,6 +35,8 @@ def normalize_row(row, topic):
 
     if "timestamp" in row:
         row["timestamp"] = pd.to_datetime(row["timestamp"], utc=True, errors="coerce")
+    if "forecast_origin" in row:
+        row["forecast_origin"] = pd.to_datetime(row["forecast_origin"], utc=True, errors="coerce")
 
     if "sensorId" in row:
         row["sensorId"] = str(row["sensorId"])
@@ -63,8 +65,27 @@ def normalize_row(row, topic):
         row["value"] = None
 
     row["value"] = pd.to_numeric(row["value"], errors="coerce")
+    row["horizon_hours"] = pd.to_numeric(row.get("horizon_hours"), errors="coerce")
 
     return row
+
+
+def add_forecast_columns(df):
+    if "forecast_origin" not in df.columns:
+        df["forecast_origin"] = pd.NaT
+
+    df["forecast_origin"] = pd.to_datetime(df["forecast_origin"], utc=True, errors="coerce")
+    df["timestamp"] = pd.to_datetime(df["timestamp"], utc=True, errors="coerce")
+    df["forecast_origin"] = df["forecast_origin"].fillna(df["timestamp"])
+
+    if "horizon_hours" not in df.columns:
+        df["horizon_hours"] = pd.NA
+
+    inferred_horizon = (df["timestamp"] - df["forecast_origin"]).dt.total_seconds() / 3600
+    df["horizon_hours"] = pd.to_numeric(df["horizon_hours"], errors="coerce").fillna(inferred_horizon)
+    df["horizon_hours"] = df["horizon_hours"].round().astype("Int64")
+    df["forecast_origin_label"] = df["forecast_origin"].dt.strftime("%Y-%m-%d %H:%M")
+    return df
 
 
 def poll_messages(consumer, max_records=200):
@@ -92,7 +113,7 @@ consumer = create_consumer()
 # -------------------------
 # Controls
 # -------------------------
-col1, col2, col3, col4 = st.columns(4)
+col1, col2, col3, col4, col5 = st.columns(5)
 
 with col1:
     selected_metric = st.selectbox("Metric", ["pm10", "pm25", "both"])
@@ -101,9 +122,12 @@ with col2:
     selected_model = st.selectbox("Model", ["fine_tuned", "zero_shot", "both"])
 
 with col3:
-    auto_refresh = st.toggle("Auto refresh", value=True)
+    forecast_view = st.selectbox("Forecast view", ["latest cycle", "compare last 3", "all buffered"])
 
 with col4:
+    auto_refresh = st.toggle("Auto refresh", value=True)
+
+with col5:
     refresh_now = st.button("Refresh now")
 
 
@@ -131,7 +155,8 @@ else:
         df["sensorId"] = df["sensorId"].astype(str)
     if "value" in df.columns:
         df["value"] = pd.to_numeric(df["value"], errors="coerce")
-    df = df.sort_values("timestamp")
+    df = add_forecast_columns(df)
+    df = df.sort_values(["forecast_origin", "timestamp"])
 
     # -------------------------
     # Metric filtering
@@ -161,33 +186,52 @@ else:
         if selected_sensors:
             metric_df = metric_df[metric_df["sensorId"].astype(str).isin(selected_sensors)]
 
+        origins = sorted(metric_df["forecast_origin"].dropna().unique())
+        if forecast_view == "latest cycle" and origins:
+            shown_origins = origins[-1:]
+            plot_df = metric_df[metric_df["forecast_origin"].isin(shown_origins)].copy()
+        elif forecast_view == "compare last 3" and origins:
+            shown_origins = origins[-3:]
+            plot_df = metric_df[metric_df["forecast_origin"].isin(shown_origins)].copy()
+        else:
+            shown_origins = origins
+            plot_df = metric_df.copy()
+
+        if plot_df.empty:
+            st.warning("No data available for the selected forecast view.")
+            st.stop()
+
         # -------------------------
         # KPIs
         # -------------------------
-        latest_value = metric_df["value"].dropna().iloc[-1] if not metric_df["value"].dropna().empty else None
-        sensor_count = metric_df["sensorId"].nunique()
+        latest_value = plot_df["value"].dropna().iloc[-1] if not plot_df["value"].dropna().empty else None
+        sensor_count = plot_df["sensorId"].nunique()
+        latest_origin = max(shown_origins).strftime("%Y-%m-%d %H:%M") if shown_origins else "N/A"
 
-        k1, k2, k3 = st.columns(3)
+        k1, k2, k3, k4 = st.columns(4)
         k1.metric("Metric", selected_metric.upper())
         k2.metric("Sensors shown", sensor_count)
-        k3.metric("Latest value", f"{latest_value:.2f}" if latest_value is not None else "N/A")
+        k3.metric("Forecast cycle", latest_origin)
+        k4.metric("Latest value", f"{latest_value:.2f}" if latest_value is not None else "N/A")
 
         # -------------------------
         # Plot
         # -------------------------
-        metric_df = metric_df.sort_values("timestamp")
+        plot_df = plot_df.sort_values(["forecast_origin", "timestamp"])
 
         if selected_metric == "both":
-            metric_df["label"] = (
-                metric_df["sensorId"].astype(str)
+            plot_df["label"] = (
+                plot_df["sensorId"].astype(str)
                 + " - "
-                + metric_df["metric"]
+                + plot_df["metric"]
                 + " - "
-                + metric_df["model"]
+                + plot_df["model"]
             )
+            if forecast_view != "latest cycle":
+                plot_df["label"] = plot_df["label"] + " - " + plot_df["forecast_origin_label"]
 
             fig = px.line(
-                metric_df,
+                plot_df,
                 x="timestamp",
                 y="value",
                 color="label",
@@ -197,9 +241,11 @@ else:
             )
 
         else:
-            metric_df["label"] = metric_df["sensorId"].astype(str) + " - " + metric_df["model"]
+            plot_df["label"] = plot_df["sensorId"].astype(str) + " - " + plot_df["model"]
+            if forecast_view != "latest cycle":
+                plot_df["label"] = plot_df["label"] + " - " + plot_df["forecast_origin_label"]
             fig = px.line(
-                metric_df,
+                plot_df,
                 x="timestamp",
                 y="value",
                 color="label",
@@ -214,8 +260,8 @@ else:
         # Tables
         # -------------------------
         latest_per_sensor = (
-            metric_df.sort_values("timestamp")
-            .groupby("sensorId", as_index=False)
+            plot_df.sort_values(["forecast_origin", "timestamp"])
+            .groupby(["sensorId", "model", "metric"], as_index=False)
             .tail(1)
             .sort_values("value", ascending=False)
         )
@@ -225,14 +271,18 @@ else:
         with col_left:
             st.subheader("Latest records")
             st.dataframe(
-                metric_df[["timestamp", "sensorId", "model", "metric", "value"]].tail(20),
+                plot_df[
+                    ["forecast_origin", "horizon_hours", "timestamp", "sensorId", "model", "metric", "value"]
+                ].tail(30),
                 width="stretch"
             )
 
         with col_right:
             st.subheader("Latest per sensor")
             st.dataframe(
-                latest_per_sensor[["sensorId", "timestamp", "model", "metric", "value"]],
+                latest_per_sensor[
+                    ["sensorId", "model", "metric", "forecast_origin", "horizon_hours", "timestamp", "value"]
+                ],
                 width="stretch"
             )
 
