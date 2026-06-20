@@ -6,6 +6,7 @@ data/training/*
 !data/raw/.gitkeep
 !data/streaming/.gitkeep
 !data/training/.gitkeep
+!data/streaming/bitola_sensor_weather_features_online.csv
 
 .env
 venv
