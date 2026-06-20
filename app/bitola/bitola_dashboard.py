@@ -1,294 +1,418 @@
-import json
+import sqlite3
+import time as time_module
+from datetime import datetime, time
+from pathlib import Path
+
 import pandas as pd
 import streamlit as st
 import plotly.express as px
-from kafka import KafkaConsumer
 import os
 
 st.set_page_config(page_title="Bitola Air Quality Dashboard", layout="wide")
 
 st.title("Bitola Air Quality Dashboard")
 
-PM10_TOPIC = "FullPm10WeatherData"
-PM25_TOPIC = "FullPm25WeatherData"
-PM10_ZERO_SHOT_TOPIC = "FullPm10WeatherData_ZeroShot"
-PM25_ZERO_SHOT_TOPIC = "FullPm25WeatherData_ZeroShot"
-ALL_TOPICS = [PM10_TOPIC, PM25_TOPIC, PM10_ZERO_SHOT_TOPIC, PM25_ZERO_SHOT_TOPIC]
-BOOTSTRAP_SERVERS = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092")
-MAX_POINTS = 24000
+BASE_DIR = Path(__file__).resolve().parents[2]
+DB_PATH = Path(os.getenv("PROJECT_DB_PATH", str(BASE_DIR / "data" / "project.db"))).expanduser()
+CITY = "Bitola"
 
 
-@st.cache_resource
-def create_consumer():
-    return KafkaConsumer(
-        *ALL_TOPICS,
-        bootstrap_servers=BOOTSTRAP_SERVERS,
-        value_deserializer=lambda x: json.loads(x.decode("utf-8")),
-        auto_offset_reset="latest",
-        enable_auto_commit=True,
-        consumer_timeout_ms=1000
+refresh_col1, refresh_col2, refresh_col3 = st.columns([1, 1, 3])
+
+with refresh_col1:
+    refresh_now = st.button("Refresh data")
+
+with refresh_col2:
+    auto_refresh = st.toggle("Auto refresh", value=False)
+
+with refresh_col3:
+    refresh_seconds = st.number_input(
+        "Refresh interval seconds",
+        min_value=5,
+        max_value=300,
+        value=30,
+        step=5,
+        disabled=not auto_refresh,
     )
 
-
-def normalize_row(row, topic):
-    row = dict(row)
-
-    if "timestamp" in row:
-        row["timestamp"] = pd.to_datetime(row["timestamp"], utc=True, errors="coerce")
-    if "forecast_origin" in row:
-        row["forecast_origin"] = pd.to_datetime(row["forecast_origin"], utc=True, errors="coerce")
-
-    if "sensorId" in row:
-        row["sensorId"] = str(row["sensorId"])
-
-    row["topic"] = topic
-
-    if topic == PM10_TOPIC:
-        row["metric"] = "pm10"
-        row["model"] = "fine_tuned"
-        row["value"] = row.get("pm10")
-    elif topic == PM25_TOPIC:
-        row["metric"] = "pm25"
-        row["model"] = "fine_tuned"
-        row["value"] = row.get("pm25")
-    elif topic == PM10_ZERO_SHOT_TOPIC:
-        row["metric"] = "pm10"
-        row["model"] = "zero_shot"
-        row["value"] = row.get("pm10")
-    elif topic == PM25_ZERO_SHOT_TOPIC:
-        row["metric"] = "pm25"
-        row["model"] = "zero_shot"
-        row["value"] = row.get("pm25")
-    else:
-        row["metric"] = "unknown"
-        row["model"] = "unknown"
-        row["value"] = None
-
-    row["value"] = pd.to_numeric(row["value"], errors="coerce")
-    row["horizon_hours"] = pd.to_numeric(row.get("horizon_hours"), errors="coerce")
-
-    return row
+if refresh_now:
+    st.cache_data.clear()
+    st.rerun()
 
 
-def add_forecast_columns(df):
-    if "forecast_origin" not in df.columns:
-        df["forecast_origin"] = pd.NaT
-
-    df["forecast_origin"] = pd.to_datetime(df["forecast_origin"], utc=True, errors="coerce")
-    df["timestamp"] = pd.to_datetime(df["timestamp"], utc=True, errors="coerce")
-    df["forecast_origin"] = df["forecast_origin"].fillna(df["timestamp"])
-
-    if "horizon_hours" not in df.columns:
-        df["horizon_hours"] = pd.NA
-
-    inferred_horizon = (df["timestamp"] - df["forecast_origin"]).dt.total_seconds() / 3600
-    df["horizon_hours"] = pd.to_numeric(df["horizon_hours"], errors="coerce").fillna(inferred_horizon)
-    df["horizon_hours"] = df["horizon_hours"].round().astype("Int64")
-    df["forecast_origin_label"] = df["forecast_origin"].dt.strftime("%Y-%m-%d %H:%M")
-    return df
+def table_exists(conn, table_name):
+    result = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?",
+        (table_name,),
+    ).fetchone()
+    return result is not None
 
 
-def poll_messages(consumer, max_records=200):
-    batch = consumer.poll(timeout_ms=1000, max_records=max_records)
-    rows = []
-
-    for topic_partition, messages in batch.items():
-        topic = topic_partition.topic
-        for msg in messages:
-            row = normalize_row(msg.value, topic)
-            rows.append(row)
-
-    return rows
+def online_model_label(model_version):
+    if pd.isna(model_version):
+        return "Unknown"
+    if "fine_tuned" in model_version:
+        return "Fine-tuned"
+    if "zero_shot" in model_version:
+        return "Zero-shot"
+    return str(model_version)
 
 
-# -------------------------
-# State
-# -------------------------
-if "rows" not in st.session_state:
-    st.session_state.rows = []
+@st.cache_data(ttl=60)
+def load_historical_metadata(db_path):
+    db_file = Path(db_path)
+    if not db_file.exists():
+        return pd.DataFrame()
 
-consumer = create_consumer()
+    frames = []
+    with sqlite3.connect(db_file) as conn:
+        if table_exists(conn, "offline_test_results"):
+            frames.append(
+                pd.read_sql_query(
+                    """
+                    SELECT
+                        'offline_test' AS phase,
+                        pollutant,
+                        sensor_id,
+                        MIN(timestamp) AS min_timestamp,
+                        MAX(timestamp) AS max_timestamp,
+                        COUNT(*) AS row_count
+                    FROM offline_test_results
+                    WHERE city = ?
+                    GROUP BY pollutant, sensor_id
+                    """,
+                    conn,
+                    params=(CITY,),
+                )
+            )
+
+        if table_exists(conn, "online_forecasts"):
+            frames.append(
+                pd.read_sql_query(
+                    """
+                    SELECT
+                        'online_forecast' AS phase,
+                        pollutant,
+                        sensor_id,
+                        MIN(target_at) AS min_timestamp,
+                        MAX(target_at) AS max_timestamp,
+                        COUNT(*) AS row_count
+                    FROM online_forecasts
+                    WHERE city = ?
+                    GROUP BY pollutant, sensor_id
+                    """,
+                    conn,
+                    params=(CITY,),
+                )
+            )
+
+    if not frames:
+        return pd.DataFrame()
+
+    return pd.concat(frames, ignore_index=True)
 
 
-# -------------------------
-# Controls
-# -------------------------
-col1, col2, col3, col4, col5 = st.columns(5)
+@st.cache_data(ttl=30)
+def load_online_issue_hour_options(db_path, start_at, end_at, pollutants, sensor_ids):
+    db_file = Path(db_path)
+    if not db_file.exists():
+        return []
 
-with col1:
-    selected_metric = st.selectbox("Metric", ["pm10", "pm25", "both"])
+    pollutants = set(pollutants)
+    sensor_ids = set(sensor_ids)
 
-with col2:
-    selected_model = st.selectbox("Model", ["fine_tuned", "zero_shot", "both"])
+    with sqlite3.connect(db_file) as conn:
+        if not table_exists(conn, "online_forecasts"):
+            return []
 
-with col3:
-    forecast_view = st.selectbox("Forecast view", ["latest cycle", "compare last 3", "all buffered"])
-
-with col4:
-    auto_refresh = st.toggle("Auto refresh", value=True)
-
-with col5:
-    refresh_now = st.button("Refresh now")
-
-
-# -------------------------
-# Data fetch
-# -------------------------
-if auto_refresh or refresh_now:
-    new_rows = poll_messages(consumer)
-    if new_rows:
-        st.session_state.rows.extend(new_rows)
-        st.session_state.rows = st.session_state.rows[-MAX_POINTS:]
-
-
-df = pd.DataFrame(st.session_state.rows)
-
-
-# -------------------------
-# Visualization
-# -------------------------
-if df.empty:
-    st.info("No data received yet from Kafka topics.")
-else:
-    df = df.dropna(subset=["timestamp"])
-    if "sensorId" in df.columns:
-        df["sensorId"] = df["sensorId"].astype(str)
-    if "value" in df.columns:
-        df["value"] = pd.to_numeric(df["value"], errors="coerce")
-    df = add_forecast_columns(df)
-    df = df.sort_values(["forecast_origin", "timestamp"])
-
-    # -------------------------
-    # Metric filtering
-    # -------------------------
-    if selected_metric == "both":
-        metric_df = df.copy()
-    else:
-        metric_df = df[df["metric"] == selected_metric].copy()
-
-    if selected_model != "both":
-        metric_df = metric_df[metric_df["model"] == selected_model].copy()
-
-    if metric_df.empty:
-        st.warning(f"No data available.")
-    else:
-        # -------------------------
-        # Sensor filtering
-        # -------------------------
-        sensor_ids = sorted(metric_df["sensorId"].astype(str).unique())
-
-        selected_sensors = st.multiselect(
-            "Sensors",
-            options=sensor_ids,
-            default=sensor_ids[:5] if len(sensor_ids) > 5 else sensor_ids
+        issue_hour_df = pd.read_sql_query(
+            """
+            SELECT DISTINCT strftime('%H', issued_at) AS issue_hour, pollutant, sensor_id
+            FROM online_forecasts
+            WHERE city = ?
+              AND issued_at BETWEEN ? AND ?
+            ORDER BY issue_hour
+            """,
+            conn,
+            params=(CITY, start_at, end_at),
         )
 
-        if selected_sensors:
-            metric_df = metric_df[metric_df["sensorId"].astype(str).isin(selected_sensors)]
+    if issue_hour_df.empty:
+        return []
 
-        origins = sorted(metric_df["forecast_origin"].dropna().unique())
-        if forecast_view == "latest cycle" and origins:
-            shown_origins = origins[-1:]
-            plot_df = metric_df[metric_df["forecast_origin"].isin(shown_origins)].copy()
-        elif forecast_view == "compare last 3" and origins:
-            shown_origins = origins[-3:]
-            plot_df = metric_df[metric_df["forecast_origin"].isin(shown_origins)].copy()
-        else:
-            shown_origins = origins
-            plot_df = metric_df.copy()
+    issue_hour_df = issue_hour_df[
+        issue_hour_df["pollutant"].isin(pollutants)
+        & issue_hour_df["sensor_id"].astype(str).isin(sensor_ids)
+    ].copy()
 
-        if plot_df.empty:
-            st.warning("No data available for the selected forecast view.")
-            st.stop()
+    hours = issue_hour_df["issue_hour"].dropna().astype(int).unique()
+    return [f"{hour:02d}:00" for hour in sorted(hours)]
 
-        # -------------------------
-        # KPIs
-        # -------------------------
-        latest_value = plot_df["value"].dropna().iloc[-1] if not plot_df["value"].dropna().empty else None
-        sensor_count = plot_df["sensorId"].nunique()
-        latest_origin = max(shown_origins).strftime("%Y-%m-%d %H:%M") if shown_origins else "N/A"
 
-        k1, k2, k3, k4 = st.columns(4)
-        k1.metric("Metric", selected_metric.upper())
-        k2.metric("Sensors shown", sensor_count)
-        k3.metric("Forecast cycle", latest_origin)
-        k4.metric("Latest value", f"{latest_value:.2f}" if latest_value is not None else "N/A")
+@st.cache_data(ttl=30)
+def load_historical_rows(
+    db_path,
+    start_at,
+    end_at,
+    pollutants,
+    sensor_ids,
+    online_issue_hour=None,
+    online_models=None,
+    shown_series=None,
+):
+    db_file = Path(db_path)
+    if not db_file.exists():
+        return pd.DataFrame()
 
-        # -------------------------
-        # Plot
-        # -------------------------
-        plot_df = plot_df.sort_values(["forecast_origin", "timestamp"])
+    pollutants = set(pollutants)
+    sensor_ids = set(sensor_ids)
+    online_models = set(online_models or [])
+    shown_series = set(shown_series or [])
+    frames = []
 
-        if selected_metric == "both":
-            plot_df["label"] = (
-                plot_df["sensorId"].astype(str)
-                + " - "
-                + plot_df["metric"]
-                + " - "
-                + plot_df["model"]
+    with sqlite3.connect(db_file) as conn:
+        if table_exists(conn, "offline_test_results") and (
+            "Actual" in shown_series or "Offline test prediction" in shown_series
+        ):
+            offline_df = pd.read_sql_query(
+                """
+                SELECT timestamp, sensor_id, pollutant, actual_value, predicted_value
+                FROM offline_test_results
+                WHERE city = ?
+                  AND timestamp BETWEEN ? AND ?
+                ORDER BY timestamp, sensor_id, pollutant
+                """,
+                conn,
+                params=(CITY, start_at, end_at),
             )
-            if forecast_view != "latest cycle":
-                plot_df["label"] = plot_df["label"] + " - " + plot_df["forecast_origin_label"]
+            if not offline_df.empty:
+                offline_df = offline_df[
+                    offline_df["pollutant"].isin(pollutants)
+                    & offline_df["sensor_id"].astype(str).isin(sensor_ids)
+                ].copy()
 
-            fig = px.line(
-                plot_df,
-                x="timestamp",
-                y="value",
-                color="label",
-                line_dash="metric",
-                markers=True,
-                title="Bitola predictions by metric and model"
+                if "Actual" in shown_series:
+                    actual_df = offline_df[["timestamp", "sensor_id", "pollutant", "actual_value"]].rename(
+                        columns={"actual_value": "value"}
+                    )
+                    actual_df["series"] = "Actual"
+                    frames.append(actual_df)
+
+                if "Offline test prediction" in shown_series:
+                    predicted_df = offline_df[["timestamp", "sensor_id", "pollutant", "predicted_value"]].rename(
+                        columns={"predicted_value": "value"}
+                    )
+                    predicted_df["series"] = "Offline test prediction"
+                    frames.append(predicted_df)
+
+        if (
+            "Online forecast" in shown_series
+            and online_issue_hour is not None
+            and online_models
+            and table_exists(conn, "online_forecasts")
+        ):
+            online_df = pd.read_sql_query(
+                """
+                SELECT target_at AS timestamp, sensor_id, pollutant, predicted_value, model_version
+                FROM online_forecasts
+                WHERE city = ?
+                  AND issued_at BETWEEN ? AND ?
+                  AND strftime('%H', issued_at) = ?
+                  AND target_at BETWEEN ? AND ?
+                ORDER BY target_at, sensor_id, pollutant, model_version
+                """,
+                conn,
+                params=(CITY, start_at, end_at, online_issue_hour[:2], start_at, end_at),
             )
+            if not online_df.empty:
+                online_df["model_label"] = online_df["model_version"].map(online_model_label)
+                online_df = online_df[
+                    online_df["pollutant"].isin(pollutants)
+                    & online_df["sensor_id"].astype(str).isin(sensor_ids)
+                    & online_df["model_label"].isin(online_models)
+                ].copy()
+                online_df = online_df.rename(columns={"predicted_value": "value"})
+                online_df["series"] = "Online forecast - " + online_df["model_label"]
+                frames.append(online_df[["timestamp", "sensor_id", "pollutant", "value", "series"]])
 
-        else:
-            plot_df["label"] = plot_df["sensorId"].astype(str) + " - " + plot_df["model"]
-            if forecast_view != "latest cycle":
-                plot_df["label"] = plot_df["label"] + " - " + plot_df["forecast_origin_label"]
-            fig = px.line(
-                plot_df,
-                x="timestamp",
-                y="value",
-                color="label",
-                line_dash="model",
-                markers=True,
-                title=f"Bitola {selected_metric.upper()} predictions over time"
-            )
+    if not frames:
+        return pd.DataFrame()
 
-        st.plotly_chart(fig, width="stretch")
+    result = pd.concat(frames, ignore_index=True)
+    result["timestamp"] = pd.to_datetime(result["timestamp"], errors="coerce")
+    result["sensor_id"] = result["sensor_id"].astype(str)
+    result["value"] = pd.to_numeric(result["value"], errors="coerce")
+    return result.dropna(subset=["timestamp", "value"]).sort_values("timestamp")
 
-        # -------------------------
-        # Tables
-        # -------------------------
-        latest_per_sensor = (
-            plot_df.sort_values(["forecast_origin", "timestamp"])
-            .groupby(["sensorId", "model", "metric"], as_index=False)
-            .tail(1)
-            .sort_values("value", ascending=False)
+
+def render_historical_results():
+    st.subheader("Historical Results")
+
+    metadata = load_historical_metadata(str(DB_PATH))
+    if metadata.empty:
+        st.info(f"No historical SQLite data found at {DB_PATH}.")
+        return
+
+    metadata["min_timestamp"] = pd.to_datetime(metadata["min_timestamp"], errors="coerce")
+    metadata["max_timestamp"] = pd.to_datetime(metadata["max_timestamp"], errors="coerce")
+    metadata = metadata.dropna(subset=["min_timestamp", "max_timestamp"])
+
+    if metadata.empty:
+        st.info("Historical data exists, but no valid timestamps were found.")
+        return
+
+    available_pollutants = sorted(metadata["pollutant"].dropna().unique())
+    metric_options = available_pollutants + (["both"] if len(available_pollutants) > 1 else [])
+
+    hcol1, hcol2, hcol3 = st.columns([1, 2, 2])
+
+    with hcol1:
+        selected_historical_metric = st.selectbox(
+            "Historical metric",
+            metric_options,
+            index=metric_options.index("pm10") if "pm10" in metric_options else 0,
         )
 
-        col_left, col_right = st.columns([2, 1])
+    selected_pollutants = (
+        available_pollutants
+        if selected_historical_metric == "both"
+        else [selected_historical_metric]
+    )
 
-        with col_left:
-            st.subheader("Latest records")
-            st.dataframe(
-                plot_df[
-                    ["forecast_origin", "horizon_hours", "timestamp", "sensorId", "model", "metric", "value"]
-                ].tail(30),
-                width="stretch"
-            )
+    sensor_options = sorted(
+        metadata[metadata["pollutant"].isin(selected_pollutants)]["sensor_id"].astype(str).unique()
+    )
 
-        with col_right:
-            st.subheader("Latest per sensor")
-            st.dataframe(
-                latest_per_sensor[
-                    ["sensorId", "model", "metric", "forecast_origin", "horizon_hours", "timestamp", "value"]
-                ],
-                width="stretch"
-            )
+    with hcol2:
+        selected_historical_sensors = st.multiselect(
+            "Historical sensors",
+            options=sensor_options,
+            default=sensor_options[:3],
+        )
+
+    min_date = metadata["min_timestamp"].min().date()
+    max_date = metadata["max_timestamp"].max().date()
+
+    with hcol3:
+        selected_date_range = st.date_input(
+            "Date range",
+            value=(min_date, max_date),
+            min_value=min_date,
+            max_value=max_date,
+        )
+
+    if not selected_historical_sensors:
+        st.warning("Select at least one sensor to show historical results.")
+        return
+
+    if not isinstance(selected_date_range, (tuple, list)) or len(selected_date_range) != 2:
+        st.warning("Select a start and end date.")
+        return
+
+    start_date, end_date = selected_date_range
+    start_at = datetime.combine(start_date, time.min).strftime("%Y-%m-%d %H:%M:%S")
+    end_at = datetime.combine(end_date, time.max).strftime("%Y-%m-%d %H:%M:%S")
+
+    series_options = ["Actual", "Offline test prediction", "Online forecast"]
+    selected_series = st.multiselect(
+        "Show series",
+        options=series_options,
+        default=["Actual", "Offline test prediction", "Online forecast"],
+    )
+
+    issue_hour_options = load_online_issue_hour_options(
+        str(DB_PATH),
+        start_at,
+        end_at,
+        tuple(selected_pollutants),
+        tuple(selected_historical_sensors),
+    )
+    selected_online_issue_hour = None
+    selected_online_models = []
+
+    if "Online forecast" in selected_series:
+        if issue_hour_options:
+            default_issue_hour_index = issue_hour_options.index("12:00") if "12:00" in issue_hour_options else 0
+            online_col1, online_col2 = st.columns([1, 1])
+            with online_col1:
+                selected_online_issue_hour = st.selectbox(
+                    "Online forecast issue time",
+                    options=issue_hour_options,
+                    index=default_issue_hour_index,
+                    help="Shows 24-hour forecast cycles issued at this hour for each day in the selected range.",
+                )
+            with online_col2:
+                selected_online_models = st.multiselect(
+                    "Online forecast model",
+                    options=["Fine-tuned", "Zero-shot"],
+                    default=["Fine-tuned"],
+                )
+        else:
+            st.caption("No online forecast issue times found for this selection. Showing offline rows only.")
+
+    if not selected_series:
+        st.warning("Select at least one series to plot.")
+        return
+
+    effective_series = list(selected_series)
+    if "Online forecast" in effective_series and (selected_online_issue_hour is None or not selected_online_models):
+        effective_series = [
+            series for series in effective_series if series != "Online forecast"
+        ]
+
+        if not effective_series:
+            st.info("No online forecasts match this selection.")
+            return
+
+    if selected_online_issue_hour is not None:
+        st.caption(
+            f"Online forecast line shows daily 24-hour forecast cycles issued at {selected_online_issue_hour}."
+        )
+
+    historical_df = load_historical_rows(
+        str(DB_PATH),
+        start_at,
+        end_at,
+        tuple(selected_pollutants),
+        tuple(selected_historical_sensors),
+        selected_online_issue_hour,
+        tuple(selected_online_models),
+        tuple(effective_series),
+    )
+
+    if historical_df.empty:
+        st.info("No offline test results or online forecasts match this date range.")
+        return
+
+    historical_df["label"] = (
+        historical_df["sensor_id"]
+        + " - "
+        + historical_df["pollutant"].str.upper()
+        + " - "
+        + historical_df["series"]
+    )
+
+    fig = px.line(
+        historical_df,
+        x="timestamp",
+        y="value",
+        color="label",
+        line_dash="series",
+        markers=True,
+        title="Historical actual values and model predictions",
+    )
+    st.plotly_chart(fig, width="stretch")
+
+    with st.expander("Historical rows"):
+        st.dataframe(
+            historical_df[["timestamp", "sensor_id", "pollutant", "series", "value"]].tail(200),
+            width="stretch",
+        )
 
 
-# -------------------------
-# Auto refresh
-# -------------------------
+render_historical_results()
+
 if auto_refresh:
+    time_module.sleep(refresh_seconds)
+    st.cache_data.clear()
     st.rerun()

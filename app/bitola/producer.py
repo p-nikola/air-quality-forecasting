@@ -8,7 +8,7 @@ from pathlib import Path
 if __name__ == "__main__":
 
     base_dir = Path(__file__).resolve().parents[2]
-    default_data_path = base_dir / "data" / "raw" / "bitola_sensor_weather_features_online.csv"
+    default_data_path = base_dir / "data" / "streaming" / "bitola_sensor_weather_features_online.csv"
     data_path = Path(os.getenv("BITOLA_DATA_CSV_PATH", str(default_data_path))).expanduser()
 
     if not data_path.exists():
@@ -16,6 +16,13 @@ if __name__ == "__main__":
 
     df = pd.read_csv(data_path)
     df["timestamp"] = pd.to_datetime(df["timestamp"])
+
+    required_columns = {"pm10", "pm25"}
+    missing_columns = required_columns - set(df.columns)
+    if missing_columns:
+        raise ValueError(
+            f"Input CSV must include {sorted(missing_columns)} so the online context can update PM values"
+        )
 
     df = df.sort_values(["timestamp", "sensorId"])
 
@@ -36,7 +43,9 @@ if __name__ == "__main__":
                 "humidity": float(row["relative_humidity_2m"]),
                 "pressure": float(row["surface_pressure"]),
                 "temperature": float(row["temperature_2m"]),
-                "wind_speed": float(row["wind_speed_10m"])
+                "wind_speed": float(row["wind_speed_10m"]),
+                "pm10": float(row["pm10"]),
+                "pm25": float(row["pm25"]),
             }
 
             topic = f"sensor_{row['sensorId']}"

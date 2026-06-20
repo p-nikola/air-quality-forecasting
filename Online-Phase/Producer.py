@@ -8,7 +8,7 @@ if __name__ == "__main__":
 
     SCRIPT_DIR = Path(__file__).resolve().parent
     PROJECT_ROOT = SCRIPT_DIR.parent
-    DATA_PATH = PROJECT_ROOT / "data" / "raw" / "bitola_sensor_weather_features_online.csv"
+    DATA_PATH = PROJECT_ROOT / "data" / "streaming" / "bitola_sensor_weather_features_online.csv"
 
     df = pd.read_csv(DATA_PATH)
 
