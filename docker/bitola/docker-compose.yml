@@ -26,6 +26,18 @@ services:
     environment:
       - KAFKA_BOOTSTRAP_SERVERS=kafka:29092
 
+  forecast-db-consumer:
+    build:
+      context: ../..
+      dockerfile: docker/bitola/Dockerfile.producer
+    command: ["python", "-u", "app/bitola/forecast_db_consumer.py"]
+    networks:
+      - shared_net
+    volumes:
+      - ../..:/app
+    environment:
+      - KAFKA_BOOTSTRAP_SERVERS=kafka:29092
+
   streamlit:
     build:
       context: ../..

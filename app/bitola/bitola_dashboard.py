@@ -58,6 +58,45 @@ def online_model_label(model_version):
     return str(model_version)
 
 
+def sql_placeholders(values):
+    return ",".join("?" for _ in values)
+
+
+def online_model_versions_for_labels(labels):
+    model_versions = []
+    if "Fine-tuned" in labels:
+        model_versions.extend(
+            [
+                "chronos2_pm10_bitola_fine_tuned_24h",
+                "chronos2_pm25_bitola_fine_tuned_24h",
+            ]
+        )
+    if "Zero-shot" in labels:
+        model_versions.extend(
+            [
+                "chronos2_pm10_bitola_zero_shot_24h",
+                "chronos2_pm25_bitola_zero_shot_24h",
+            ]
+        )
+    return model_versions
+
+
+def issued_timestamps_for_hour(start_at, end_at, issue_hour):
+    if issue_hour is None:
+        return []
+
+    start_ts = pd.to_datetime(start_at)
+    end_ts = pd.to_datetime(end_at)
+    hour = int(issue_hour[:2])
+
+    first_issue = start_ts.normalize() + pd.Timedelta(hours=hour)
+    if first_issue < start_ts:
+        first_issue += pd.Timedelta(days=1)
+
+    issued_times = pd.date_range(first_issue, end_ts, freq="D")
+    return issued_times.strftime("%Y-%m-%d %H:%M:%S").tolist()
+
+
 @st.cache_data(ttl=60)
 def load_historical_metadata(db_path):
     db_file = Path(db_path)
@@ -118,32 +157,31 @@ def load_online_issue_hour_options(db_path, start_at, end_at, pollutants, sensor
     if not db_file.exists():
         return []
 
-    pollutants = set(pollutants)
-    sensor_ids = set(sensor_ids)
+    if not pollutants or not sensor_ids:
+        return []
 
     with sqlite3.connect(db_file) as conn:
         if not table_exists(conn, "online_forecasts"):
             return []
 
+        pollutant_values = list(pollutants)
+        sensor_values = [str(sensor_id) for sensor_id in sensor_ids]
         issue_hour_df = pd.read_sql_query(
-            """
-            SELECT DISTINCT strftime('%H', issued_at) AS issue_hour, pollutant, sensor_id
+            f"""
+            SELECT DISTINCT substr(issued_at, 12, 2) AS issue_hour
             FROM online_forecasts
             WHERE city = ?
               AND issued_at BETWEEN ? AND ?
+              AND pollutant IN ({sql_placeholders(pollutant_values)})
+              AND sensor_id IN ({sql_placeholders(sensor_values)})
             ORDER BY issue_hour
             """,
             conn,
-            params=(CITY, start_at, end_at),
+            params=(CITY, start_at, end_at, *pollutant_values, *sensor_values),
         )
 
     if issue_hour_df.empty:
         return []
-
-    issue_hour_df = issue_hour_df[
-        issue_hour_df["pollutant"].isin(pollutants)
-        & issue_hour_df["sensor_id"].astype(str).isin(sensor_ids)
-    ].copy()
 
     hours = issue_hour_df["issue_hour"].dropna().astype(int).unique()
     return [f"{hour:02d}:00" for hour in sorted(hours)]
@@ -164,33 +202,33 @@ def load_historical_rows(
     if not db_file.exists():
         return pd.DataFrame()
 
-    pollutants = set(pollutants)
-    sensor_ids = set(sensor_ids)
+    pollutants = list(pollutants)
+    sensor_ids = [str(sensor_id) for sensor_id in sensor_ids]
     online_models = set(online_models or [])
     shown_series = set(shown_series or [])
     frames = []
+
+    if not pollutants or not sensor_ids:
+        return pd.DataFrame()
 
     with sqlite3.connect(db_file) as conn:
         if table_exists(conn, "offline_test_results") and (
             "Actual" in shown_series or "Offline test prediction" in shown_series
         ):
             offline_df = pd.read_sql_query(
-                """
+                f"""
                 SELECT timestamp, sensor_id, pollutant, actual_value, predicted_value
                 FROM offline_test_results
                 WHERE city = ?
                   AND timestamp BETWEEN ? AND ?
+                  AND pollutant IN ({sql_placeholders(pollutants)})
+                  AND sensor_id IN ({sql_placeholders(sensor_ids)})
                 ORDER BY timestamp, sensor_id, pollutant
                 """,
                 conn,
-                params=(CITY, start_at, end_at),
+                params=(CITY, start_at, end_at, *pollutants, *sensor_ids),
             )
             if not offline_df.empty:
-                offline_df = offline_df[
-                    offline_df["pollutant"].isin(pollutants)
-                    & offline_df["sensor_id"].astype(str).isin(sensor_ids)
-                ].copy()
-
                 if "Actual" in shown_series:
                     actual_df = offline_df[["timestamp", "sensor_id", "pollutant", "actual_value"]].rename(
                         columns={"actual_value": "value"}
@@ -211,26 +249,37 @@ def load_historical_rows(
             and online_models
             and table_exists(conn, "online_forecasts")
         ):
-            online_df = pd.read_sql_query(
-                """
+            issued_times = issued_timestamps_for_hour(start_at, end_at, online_issue_hour)
+            model_versions = online_model_versions_for_labels(online_models)
+
+            if not issued_times or not model_versions:
+                online_df = pd.DataFrame()
+            else:
+                online_df = pd.read_sql_query(
+                    f"""
                 SELECT target_at AS timestamp, sensor_id, pollutant, predicted_value, model_version
                 FROM online_forecasts
                 WHERE city = ?
-                  AND issued_at BETWEEN ? AND ?
-                  AND strftime('%H', issued_at) = ?
+                  AND issued_at IN ({sql_placeholders(issued_times)})
                   AND target_at BETWEEN ? AND ?
+                  AND pollutant IN ({sql_placeholders(pollutants)})
+                  AND sensor_id IN ({sql_placeholders(sensor_ids)})
+                  AND model_version IN ({sql_placeholders(model_versions)})
                 ORDER BY target_at, sensor_id, pollutant, model_version
                 """,
-                conn,
-                params=(CITY, start_at, end_at, online_issue_hour[:2], start_at, end_at),
-            )
+                    conn,
+                    params=(
+                        CITY,
+                        *issued_times,
+                        start_at,
+                        end_at,
+                        *pollutants,
+                        *sensor_ids,
+                        *model_versions,
+                    ),
+                )
             if not online_df.empty:
                 online_df["model_label"] = online_df["model_version"].map(online_model_label)
-                online_df = online_df[
-                    online_df["pollutant"].isin(pollutants)
-                    & online_df["sensor_id"].astype(str).isin(sensor_ids)
-                    & online_df["model_label"].isin(online_models)
-                ].copy()
                 online_df = online_df.rename(columns={"predicted_value": "value"})
                 online_df["series"] = "Online forecast - " + online_df["model_label"]
                 frames.append(online_df[["timestamp", "sensor_id", "pollutant", "value", "series"]])

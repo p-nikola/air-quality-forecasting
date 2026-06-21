@@ -21,3 +21,16 @@ CREATE TABLE offline_test_results (
             model_version TEXT,
             PRIMARY KEY (city, sensor_id, issued_at, target_at, pollutant, model_version)
         );
+
+
+CREATE INDEX IF NOT EXISTS idx_online_forecasts_filters
+ON online_forecasts (city, pollutant, model_version, issued_at, target_at);
+
+CREATE INDEX IF NOT EXISTS idx_online_forecasts_latest
+ON online_forecasts (city, issued_at);
+
+CREATE INDEX IF NOT EXISTS idx_online_forecasts_timeline
+ON online_forecasts (city, issued_at, pollutant, sensor_id, model_version, target_at);
+
+CREATE INDEX IF NOT EXISTS idx_offline_test_results_timeline
+ON offline_test_results (city, timestamp, pollutant, sensor_id);

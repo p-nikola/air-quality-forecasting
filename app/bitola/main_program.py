@@ -1,5 +1,4 @@
 import os
-import sqlite3
 from pathlib import Path
 
 import findspark
@@ -17,7 +16,6 @@ KAFKA_BOOTSTRAP_SERVERS = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092")
 KAFKA_STARTING_OFFSETS = os.getenv("KAFKA_STARTING_OFFSETS", "latest")
 BASE_DIR = Path(__file__).resolve().parents[2]
 OFFLINE_DIR = BASE_DIR / "offline-Phase"
-DB_PATH = Path(os.getenv("PROJECT_DB_PATH", str(BASE_DIR / "data" / "project.db"))).expanduser()
 DEFAULT_CONTEXT_PATH = Path(__file__).resolve().parent / "context_bitola.csv"
 CONTEXT_PATH = Path(os.getenv("BITOLA_CONTEXT_CSV_PATH", str(DEFAULT_CONTEXT_PATH))).expanduser()
 DEFAULT_FORECAST_PATH = BASE_DIR / "data" / "raw" / "bitola_forecast_weather.csv"
@@ -31,7 +29,6 @@ PM10_TOPIC = "FullPm10WeatherData"
 PM25_TOPIC = "FullPm25WeatherData"
 PM10_ZERO_SHOT_TOPIC = "FullPm10WeatherData_ZeroShot"
 PM25_ZERO_SHOT_TOPIC = "FullPm25WeatherData_ZeroShot"
-CITY = "Bitola"
 
 if not CONTEXT_PATH.exists():
     raise FileNotFoundError(f"Context CSV not found at: {CONTEXT_PATH}")
@@ -364,78 +361,6 @@ def write_to_kafka(df, topic):
     .save() 
 
 
-def ensure_online_forecasts_table(conn):
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS online_forecasts (
-            city TEXT NOT NULL,
-            sensor_id TEXT NOT NULL,
-            issued_at TEXT NOT NULL,
-            target_at TEXT NOT NULL,
-            horizon_hours INTEGER NOT NULL,
-            pollutant TEXT NOT NULL,
-            predicted_value REAL NOT NULL,
-            model_version TEXT,
-            PRIMARY KEY (city, sensor_id, issued_at, target_at, pollutant, model_version)
-        )
-        """
-    )
-
-
-def forecast_records(df, pollutant, model_version):
-    if df.empty or pollutant not in df.columns:
-        return []
-
-    records_df = df[["sensorId", "forecast_origin", "timestamp", "horizon_hours", pollutant]].copy()
-    records_df = records_df.dropna(subset=[pollutant, "forecast_origin", "timestamp", "horizon_hours"])
-    records_df = records_df.rename(
-        columns={
-            "sensorId": "sensor_id",
-            "forecast_origin": "issued_at",
-            "timestamp": "target_at",
-            pollutant: "predicted_value",
-        }
-    )
-    records_df["city"] = CITY
-    records_df["pollutant"] = pollutant
-    records_df["model_version"] = model_version
-    records_df["issued_at"] = pd.to_datetime(records_df["issued_at"], utc=True).dt.tz_convert(None).dt.strftime("%Y-%m-%d %H:%M:%S")
-    records_df["target_at"] = pd.to_datetime(records_df["target_at"], utc=True).dt.tz_convert(None).dt.strftime("%Y-%m-%d %H:%M:%S")
-    records_df["sensor_id"] = records_df["sensor_id"].astype(str)
-    records_df["horizon_hours"] = pd.to_numeric(records_df["horizon_hours"], errors="coerce").astype(int)
-
-    records_df = records_df[
-        ["city", "sensor_id", "issued_at", "target_at", "horizon_hours", "pollutant", "predicted_value", "model_version"]
-    ]
-    return list(records_df.itertuples(index=False, name=None))
-
-
-def save_online_forecasts(pm10_df, pm25_df, pm10_zero_shot_df, pm25_zero_shot_df):
-    records = []
-    records.extend(forecast_records(pm10_df, "pm10", "chronos2_pm10_bitola_fine_tuned_24h"))
-    records.extend(forecast_records(pm25_df, "pm25", "chronos2_pm25_bitola_fine_tuned_24h"))
-    records.extend(forecast_records(pm10_zero_shot_df, "pm10", "chronos2_pm10_bitola_zero_shot_24h"))
-    records.extend(forecast_records(pm25_zero_shot_df, "pm25", "chronos2_pm25_bitola_zero_shot_24h"))
-
-    if not records:
-        print("No online forecast rows to save")
-        return
-
-    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-    with sqlite3.connect(DB_PATH) as conn:
-        ensure_online_forecasts_table(conn)
-        conn.executemany(
-            """
-            INSERT OR REPLACE INTO online_forecasts (
-                city, sensor_id, issued_at, target_at, horizon_hours, pollutant, predicted_value, model_version
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            records,
-        )
-
-    print(f"Saved {len(records)} online forecast rows to {DB_PATH}")
-
-
 context_df = load_context()
 forecast_df = load_forecast()
 print(f"Loaded context rows: {len(context_df)}")
@@ -510,7 +435,6 @@ def foreach_batch(batch_df, epoch_id):
         print("Writing to kafka for zero-shot predictions...")
         write_to_kafka(pm10_zero_shot_df, PM10_ZERO_SHOT_TOPIC)
         write_to_kafka(pm25_zero_shot_df, PM25_ZERO_SHOT_TOPIC)
-        save_online_forecasts(pm10_df, pm25_df, pm10_zero_shot_df, pm25_zero_shot_df)
 
         context_df = pd.concat([context_df, ts_df], ignore_index=True)
         context_df = (
