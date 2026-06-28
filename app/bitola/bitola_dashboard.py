@@ -1,4 +1,5 @@
 import sqlite3
+from contextlib import closing
 import time as time_module
 from datetime import datetime, time
 from pathlib import Path
@@ -15,6 +16,8 @@ st.title("Bitola Air Quality Dashboard")
 BASE_DIR = Path(__file__).resolve().parents[2]
 DB_PATH = Path(os.getenv("PROJECT_DB_PATH", str(BASE_DIR / "data" / "project.db"))).expanduser()
 CITY = "Bitola"
+SQLITE_BUSY_TIMEOUT_MS = 30000
+SQLITE_CACHE_SIZE_KIB = 262144
 
 
 refresh_col1, refresh_col2, refresh_col3 = st.columns([1, 1, 3])
@@ -38,6 +41,13 @@ with refresh_col3:
 if refresh_now:
     st.cache_data.clear()
     st.rerun()
+
+
+def connect_db(db_file):
+    conn = sqlite3.connect(db_file, timeout=SQLITE_BUSY_TIMEOUT_MS / 1000)
+    conn.execute(f"PRAGMA busy_timeout={SQLITE_BUSY_TIMEOUT_MS}")
+    conn.execute(f"PRAGMA cache_size=-{SQLITE_CACHE_SIZE_KIB}")
+    return conn
 
 
 def table_exists(conn, table_name):
@@ -104,7 +114,7 @@ def load_historical_metadata(db_path):
         return pd.DataFrame()
 
     frames = []
-    with sqlite3.connect(db_file) as conn:
+    with closing(connect_db(db_file)) as conn:
         if table_exists(conn, "offline_test_results"):
             frames.append(
                 pd.read_sql_query(
@@ -145,6 +155,33 @@ def load_historical_metadata(db_path):
                 )
             )
 
+        if table_exists(conn, "online_sensor_weather_features"):
+            frames.append(
+                pd.read_sql_query(
+                    """
+                    SELECT
+                        'online_measurement' AS phase,
+                        pollutant,
+                        sensor_id,
+                        MIN(timestamp) AS min_timestamp,
+                        MAX(timestamp) AS max_timestamp,
+                        COUNT(*) AS row_count
+                    FROM (
+                        SELECT sensor_id, timestamp, 'pm10' AS pollutant, pm10 AS value
+                        FROM online_sensor_weather_features
+                        WHERE city = ? AND pm10 IS NOT NULL
+                        UNION ALL
+                        SELECT sensor_id, timestamp, 'pm25' AS pollutant, pm25 AS value
+                        FROM online_sensor_weather_features
+                        WHERE city = ? AND pm25 IS NOT NULL
+                    )
+                    GROUP BY pollutant, sensor_id
+                    """,
+                    conn,
+                    params=(CITY, CITY),
+                )
+            )
+
     if not frames:
         return pd.DataFrame()
 
@@ -160,7 +197,7 @@ def load_online_issue_hour_options(db_path, start_at, end_at, pollutants, sensor
     if not pollutants or not sensor_ids:
         return []
 
-    with sqlite3.connect(db_file) as conn:
+    with closing(connect_db(db_file)) as conn:
         if not table_exists(conn, "online_forecasts"):
             return []
 
@@ -211,7 +248,7 @@ def load_historical_rows(
     if not pollutants or not sensor_ids:
         return pd.DataFrame()
 
-    with sqlite3.connect(db_file) as conn:
+    with closing(connect_db(db_file)) as conn:
         if table_exists(conn, "offline_test_results") and (
             "Actual" in shown_series or "Offline test prediction" in shown_series
         ):
@@ -283,6 +320,47 @@ def load_historical_rows(
                 online_df = online_df.rename(columns={"predicted_value": "value"})
                 online_df["series"] = "Online forecast - " + online_df["model_label"]
                 frames.append(online_df[["timestamp", "sensor_id", "pollutant", "value", "series"]])
+
+        if "Online measurement" in shown_series and table_exists(conn, "online_sensor_weather_features"):
+            measurement_frames = []
+            if "pm10" in pollutants:
+                measurement_frames.append(
+                    pd.read_sql_query(
+                        f"""
+                        SELECT timestamp, sensor_id, 'pm10' AS pollutant, pm10 AS value
+                        FROM online_sensor_weather_features
+                        WHERE city = ?
+                          AND timestamp BETWEEN ? AND ?
+                          AND sensor_id IN ({sql_placeholders(sensor_ids)})
+                          AND pm10 IS NOT NULL
+                        ORDER BY timestamp, sensor_id
+                        """,
+                        conn,
+                        params=(CITY, start_at, end_at, *sensor_ids),
+                    )
+                )
+            if "pm25" in pollutants:
+                measurement_frames.append(
+                    pd.read_sql_query(
+                        f"""
+                        SELECT timestamp, sensor_id, 'pm25' AS pollutant, pm25 AS value
+                        FROM online_sensor_weather_features
+                        WHERE city = ?
+                          AND timestamp BETWEEN ? AND ?
+                          AND sensor_id IN ({sql_placeholders(sensor_ids)})
+                          AND pm25 IS NOT NULL
+                        ORDER BY timestamp, sensor_id
+                        """,
+                        conn,
+                        params=(CITY, start_at, end_at, *sensor_ids),
+                    )
+                )
+
+            measurement_frames = [frame for frame in measurement_frames if not frame.empty]
+            if measurement_frames:
+                measurement_df = pd.concat(measurement_frames, ignore_index=True)
+                measurement_df["series"] = "Online measurement"
+                frames.append(measurement_df)
 
     if not frames:
         return pd.DataFrame()
@@ -362,11 +440,11 @@ def render_historical_results():
     start_at = datetime.combine(start_date, time.min).strftime("%Y-%m-%d %H:%M:%S")
     end_at = datetime.combine(end_date, time.max).strftime("%Y-%m-%d %H:%M:%S")
 
-    series_options = ["Actual", "Offline test prediction", "Online forecast"]
+    series_options = ["Actual", "Offline test prediction", "Online measurement", "Online forecast"]
     selected_series = st.multiselect(
         "Show series",
         options=series_options,
-        default=["Actual", "Offline test prediction", "Online forecast"],
+        default=["Actual", "Offline test prediction", "Online measurement", "Online forecast"],
     )
 
     issue_hour_options = load_online_issue_hour_options(
@@ -430,7 +508,7 @@ def render_historical_results():
     )
 
     if historical_df.empty:
-        st.info("No offline test results or online forecasts match this date range.")
+        st.info("No historical rows match this date range.")
         return
 
     historical_df["label"] = (
@@ -448,7 +526,7 @@ def render_historical_results():
         color="label",
         line_dash="series",
         markers=True,
-        title="Historical actual values and model predictions",
+        title="Historical measurements and model predictions",
     )
     st.plotly_chart(fig, width="stretch")
 

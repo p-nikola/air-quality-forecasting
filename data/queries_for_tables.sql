@@ -34,3 +34,28 @@ ON online_forecasts (city, issued_at, pollutant, sensor_id, model_version, targe
 
 CREATE INDEX IF NOT EXISTS idx_offline_test_results_timeline
 ON offline_test_results (city, timestamp, pollutant, sensor_id);
+
+
+-- streaming measurements data table
+
+CREATE TABLE IF NOT EXISTS online_sensor_weather_features (
+    city TEXT NOT NULL,
+    sensor_id TEXT NOT NULL,
+    timestamp TEXT NOT NULL,
+    lat REAL,
+    lon REAL,
+    temperature_2m REAL,
+    relative_humidity_2m REAL,
+    wind_speed_10m REAL,
+    wind_direction_10m REAL,
+    surface_pressure REAL,
+    pm10 REAL,
+    pm25 REAL,
+    PRIMARY KEY (city, sensor_id, timestamp)
+);
+
+CREATE INDEX IF NOT EXISTS idx_online_sensor_weather_features_timeline
+ON online_sensor_weather_features (city, timestamp);
+
+CREATE INDEX IF NOT EXISTS idx_online_sensor_weather_features_sensor_timeline
+ON online_sensor_weather_features (city, sensor_id, timestamp);

@@ -26,3 +26,5 @@ offline-Phase/AutogluonModels/
 .cache
 Offline-Phase/AutogluonModels/
 data/project.db
+data/project.db-shm
+data/project.db-wal
