@@ -1,5 +1,5 @@
 Beginning AutoGluon training... Time limit = 300s
-AutoGluon will save models to '/Users/jovan/Documents/Kodovi/RNMP/Project/Offline-Phase/AutogluonModels/ag-20260509_182702'
+AutoGluon will save models to '/Users/jovan/Documents/Kodovi/RNMP/Project/Offline-Phase/AutogluonModels/ag-20260704_184458'
 =================== System Info ===================
 AutoGluon Version:  1.5.0
 Python Version:     3.11.9
@@ -10,8 +10,8 @@ CPU Count:          10
 Pytorch Version:    2.9.1
 CUDA Version:       CUDA is not available
 GPU Count:          WARNING: Exception was raised when calculating GPU count (AssertionError)
-Memory Avail:       5.32 GB / 16.00 GB (33.2%)
-Disk Space Avail:   106.70 GB / 228.27 GB (46.7%)
+Memory Avail:       5.86 GB / 16.00 GB (36.6%)
+Disk Space Avail:   90.67 GB / 228.27 GB (39.7%)
 ===================================================
 Setting presets to: chronos2
 
@@ -32,7 +32,7 @@ Fitting with arguments:
  'verbosity': 2}
 
 Inferred time series frequency: 'h'
-Provided train_data has 187352 rows (NaN fraction=23.0%), 11 time series. Median time series length is 17032 (min=17032, max=17032). 
+Provided train_data has 187352 rows (NaN fraction=26.6%), 11 time series. Median time series length is 17032 (min=17032, max=17032). 
 
 Provided data contains following columns:
 	target: 'pm25'
@@ -46,12 +46,12 @@ AutoGluon will gauge predictive performance using evaluation metric: 'MASE'
 	This metric's sign has been flipped to adhere to being higher_is_better. The metric score can be multiplied by -1 to get the metric value.
 ===================================================
 
-Starting training. Start time is 2026-05-09 20:27:12
+Starting training. Start time is 2026-07-04 20:45:00
 Models that will be trained: ['Chronos2']
 Training timeseries model Chronos2. Training for up to 299.9s of the 299.9s of remaining time.
-	2.63    s     = Training runtime
+	2.44    s     = Training runtime
 Training complete. Models trained: ['Chronos2']
-Total runtime: 2.64 s
+Total runtime: 2.46 s
 Best model: Chronos2
 Model not specified in predict, will default to the model with the best validation score: Chronos2
 Model not specified in predict, will default to the model with the best validation score: Chronos2
