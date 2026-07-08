@@ -24,6 +24,8 @@ ZERO_SHOT_DIR = Path(
     os.getenv("BITOLA_ZERO_SHOT_MODEL_PATH", str(OFFLINE_DIR / "chronos2_zero_shot"))
 ).expanduser()
 PREDICTION_HOURS = 24
+CONTEXT_CITY = os.getenv("BITOLA_CONTEXT_CITY", "bitola")
+ZERO_SHOT_MIN_CONTEXT_POINTS = int(os.getenv("BITOLA_ZERO_SHOT_MIN_CONTEXT_POINTS", "2"))
 
 PM10_TOPIC = "FullPm10WeatherData"
 PM25_TOPIC = "FullPm25WeatherData"
@@ -59,6 +61,14 @@ else:
         dtype=torch.bfloat16,
     )
     print(f"Loaded zero-shot model from {chronos2_pipeline}")
+
+def ensure_city_column(df):
+    if "city" not in df.columns:
+        df["city"] = CONTEXT_CITY
+    else:
+        df["city"] = df["city"].fillna(CONTEXT_CITY)
+    return df
+
 
 def extract_time_features(df, timestamp_col="timestamp"):
     df["hour_sin"] = np.sin(2 * np.pi * df[timestamp_col].dt.hour / 24)
@@ -144,7 +154,7 @@ neighbourhood_matrix = pd.read_csv(NEIGHBORS_PATH)
 
 def load_context():
     context_df = pd.read_csv(CONTEXT_PATH)
-    context_df = context_df.drop(columns=["city"])
+    context_df = ensure_city_column(context_df)
     context_df["timestamp"] = pd.to_datetime(context_df["timestamp"])
     return context_df
 
@@ -221,12 +231,15 @@ def predict_target_fine_tuned(pdf, context_df, target, predictor, id_col, time_c
     return result_df
 
 
-def prepare_zero_shot_context(context_df, id_col, time_col):
-    model_context = context_df.copy()
+def prepare_zero_shot_context(context_df, target, id_col, time_col):
+    model_context = context_df.drop(columns=["city"], errors="ignore").copy()
     model_context[id_col] = model_context[id_col].astype(str)
     model_context[time_col] = pd.to_datetime(model_context[time_col], utc=True).dt.tz_convert(None)
     model_context = model_context.sort_values([id_col, time_col])
     model_context = model_context.drop_duplicates(subset=[id_col, time_col], keep="last")
+
+    observed_counts = model_context.groupby(id_col)[target].transform(lambda series: series.notna().sum())
+    model_context = model_context[observed_counts >= ZERO_SHOT_MIN_CONTEXT_POINTS]
 
     regularized_series = []
     for sensor_id, sensor_df in model_context.groupby(id_col, sort=False):
@@ -235,43 +248,43 @@ def prepare_zero_shot_context(context_df, id_col, time_col):
         sensor_df = sensor_df.reindex(hourly_index)
         sensor_df[id_col] = sensor_id
         sensor_df.index.name = time_col
-
-        value_columns = [column for column in sensor_df.columns if column != id_col]
-        numeric_columns = sensor_df[value_columns].select_dtypes(include=[np.number]).columns
-        non_numeric_columns = [column for column in value_columns if column not in numeric_columns]
-
-        if len(numeric_columns) > 0:
-            sensor_df[numeric_columns] = sensor_df[numeric_columns].interpolate(
-                method="linear",
-                limit_direction="both",
-            )
-            sensor_df[numeric_columns] = sensor_df[numeric_columns].ffill().bfill()
-
-        if non_numeric_columns:
-            sensor_df[non_numeric_columns] = sensor_df[non_numeric_columns].ffill().bfill()
-
         regularized_series.append(sensor_df.reset_index())
+
+    if not regularized_series:
+        return model_context.iloc[0:0]
 
     return pd.concat(regularized_series, ignore_index=True).sort_values([id_col, time_col])
 
-
 def predict_target_zero_shot(pdf, context_df, target, pipeline, id_col, time_col):
-    model_future_df = pdf.drop(columns=["forecast_origin", "horizon_hours"], errors="ignore")
+    model_future_df = pdf.drop(columns=["forecast_origin", "horizon_hours", "city"], errors="ignore")
     model_future_df[id_col] = model_future_df[id_col].astype(str)
     model_future_df[time_col] = pd.to_datetime(model_future_df[time_col], utc=True).dt.tz_convert(None)
     model_future_df = model_future_df.sort_values([id_col, time_col])
 
-    model_context_df = prepare_zero_shot_context(context_df, id_col, time_col)
+    future_sensor_ids = set(model_future_df[id_col].dropna().astype(str).unique())
+    model_context_df = prepare_zero_shot_context(context_df, target, id_col, time_col)
+    model_context_df = model_context_df[model_context_df[id_col].astype(str).isin(future_sensor_ids)].copy()
 
-    forecast_df = pipeline.predict_df(
-        df=model_context_df,
-        timestamp_column=time_col,
-        prediction_length=PREDICTION_HOURS,
-        target=target,
-        id_column=id_col,
-        future_df=model_future_df,
-        validate_inputs=False,
-    )
+    if model_future_df.empty or model_context_df.empty:
+        result_df = pdf.copy()
+        result_df[target] = np.nan
+        return result_df
+
+    try:
+        forecast_df = pipeline.predict_df(
+            df=model_context_df,
+            timestamp_column=time_col,
+            prediction_length=PREDICTION_HOURS,
+            target=target,
+            id_column=id_col,
+            future_df=model_future_df,
+            validate_inputs=False,
+        )
+    except Exception as exc:
+        print(f"Zero-shot prediction failed for {target}: {exc}")
+        result_df = pdf.copy()
+        result_df[target] = np.nan
+        return result_df
     forecast_df[time_col] = pd.to_datetime(forecast_df[time_col], utc=True)
 
     result_df = pdf.merge(
@@ -293,6 +306,8 @@ def process_batch(pdf, context_df):
         'neighbor1_wind_speed', 'neighbor2_wind_speed', 'neighbor3_wind_speed'
     ]
 
+    pdf = ensure_city_column(pdf)
+    context_df = ensure_city_column(context_df)
     pdf[time_col] = pd.to_datetime(pdf[time_col], utc=True)
     context_df[time_col] = pd.to_datetime(context_df[time_col], utc=True)
 
@@ -347,6 +362,10 @@ def process_batch(pdf, context_df):
 
 
 def write_to_kafka(df, topic):
+    if df is None or df.empty:
+        print(f"No rows to write to {topic}; skipping")
+        return
+
     spark_df = spark.createDataFrame(df)
 
     kafka_df = spark_df.select(
@@ -413,6 +432,7 @@ def foreach_batch(batch_df, epoch_id):
             for sensor_id in new_ids:
                 proxy_history = city_baseline.copy()
                 proxy_history["sensorId"] = sensor_id
+                proxy_history["city"] = CONTEXT_CITY
 
                 temp_combined = pd.concat([context_df, proxy_history], ignore_index=True)
                 refined_data = append_neighbors(temp_combined, neighbourhood_matrix)
@@ -423,6 +443,7 @@ def foreach_batch(batch_df, epoch_id):
             context_df = pd.concat([context_df, *proxy_rows], ignore_index=True)
 
         ts_df["timestamp"] = pd.to_datetime(ts_df["timestamp"], utc=True)
+        ts_df = ensure_city_column(ts_df)
         ts_df = extract_time_features(ts_df)
         ts_df = append_neighbors(ts_df, neighbourhood_matrix)
 

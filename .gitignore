@@ -7,6 +7,8 @@ data/training/*
 !data/streaming/.gitkeep
 !data/training/.gitkeep
 !data/streaming/bitola_sensor_weather_features_online.csv
+!data/streaming/bitola_sensor_weather_features_online.csv
+!data/streaming/bitola_sensor_weather_features_online_hourly_nan.csv
 
 .env
 venv

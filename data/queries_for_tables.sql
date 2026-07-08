@@ -3,8 +3,8 @@ CREATE TABLE offline_test_results (
     sensor_id TEXT NOT NULL,
     timestamp TEXT NOT NULL,
     pollutant TEXT NOT NULL,
-    actual_value REAL NOT NULL,
-    predicted_value REAL NOT NULL,
+    actual_value REAL,
+    predicted_value REAL,
     model_version TEXT,
     PRIMARY KEY (city, sensor_id, timestamp, pollutant)
 );
@@ -59,3 +59,25 @@ ON online_sensor_weather_features (city, timestamp);
 
 CREATE INDEX IF NOT EXISTS idx_online_sensor_weather_features_sensor_timeline
 ON online_sensor_weather_features (city, sensor_id, timestamp);
+
+
+-- raw Pulse Eco measurements for online forecast comparison
+
+CREATE TABLE IF NOT EXISTS online_raw_measurements (
+    city TEXT NOT NULL,
+    sensor_id TEXT NOT NULL,
+    timestamp_utc TEXT NOT NULL,
+    timestamp_local TEXT,
+    measurement_type TEXT NOT NULL,
+    value REAL NOT NULL,
+    lat REAL,
+    lon REAL,
+    source_file TEXT,
+    UNIQUE (city, sensor_id, timestamp_utc, measurement_type)
+);
+
+CREATE INDEX IF NOT EXISTS idx_online_raw_measurements_timeline
+ON online_raw_measurements (city, measurement_type, timestamp_utc);
+
+CREATE INDEX IF NOT EXISTS idx_online_raw_measurements_sensor_timeline
+ON online_raw_measurements (city, sensor_id, measurement_type, timestamp_utc);

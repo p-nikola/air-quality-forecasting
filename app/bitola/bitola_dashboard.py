@@ -17,7 +17,7 @@ BASE_DIR = Path(__file__).resolve().parents[2]
 DB_PATH = Path(os.getenv("PROJECT_DB_PATH", str(BASE_DIR / "data" / "project.db"))).expanduser()
 CITY = "Bitola"
 SQLITE_BUSY_TIMEOUT_MS = 30000
-SQLITE_CACHE_SIZE_KIB = 262144
+ONLINE_RAW_MEASUREMENTS_TABLE = "online_raw_measurements"
 
 
 refresh_col1, refresh_col2, refresh_col3 = st.columns([1, 1, 3])
@@ -46,7 +46,6 @@ if refresh_now:
 def connect_db(db_file):
     conn = sqlite3.connect(db_file, timeout=SQLITE_BUSY_TIMEOUT_MS / 1000)
     conn.execute(f"PRAGMA busy_timeout={SQLITE_BUSY_TIMEOUT_MS}")
-    conn.execute(f"PRAGMA cache_size=-{SQLITE_CACHE_SIZE_KIB}")
     return conn
 
 
@@ -155,30 +154,24 @@ def load_historical_metadata(db_path):
                 )
             )
 
-        if table_exists(conn, "online_sensor_weather_features"):
+        if table_exists(conn, ONLINE_RAW_MEASUREMENTS_TABLE):
             frames.append(
                 pd.read_sql_query(
-                    """
+                    f"""
                     SELECT
                         'online_measurement' AS phase,
-                        pollutant,
+                        measurement_type AS pollutant,
                         sensor_id,
-                        MIN(timestamp) AS min_timestamp,
-                        MAX(timestamp) AS max_timestamp,
+                        MIN(timestamp_utc) AS min_timestamp,
+                        MAX(timestamp_utc) AS max_timestamp,
                         COUNT(*) AS row_count
-                    FROM (
-                        SELECT sensor_id, timestamp, 'pm10' AS pollutant, pm10 AS value
-                        FROM online_sensor_weather_features
-                        WHERE city = ? AND pm10 IS NOT NULL
-                        UNION ALL
-                        SELECT sensor_id, timestamp, 'pm25' AS pollutant, pm25 AS value
-                        FROM online_sensor_weather_features
-                        WHERE city = ? AND pm25 IS NOT NULL
-                    )
-                    GROUP BY pollutant, sensor_id
+                    FROM {ONLINE_RAW_MEASUREMENTS_TABLE}
+                    WHERE city = ?
+                      AND measurement_type IN ('pm10', 'pm25')
+                    GROUP BY measurement_type, sensor_id
                     """,
                     conn,
-                    params=(CITY, CITY),
+                    params=(CITY,),
                 )
             )
 
@@ -249,12 +242,24 @@ def load_historical_rows(
         return pd.DataFrame()
 
     with closing(connect_db(db_file)) as conn:
-        if table_exists(conn, "offline_test_results") and (
-            "Actual" in shown_series or "Offline test prediction" in shown_series
-        ):
+        offline_series = {
+            "Offline train actual",
+            "Offline test actual",
+            "Offline test prediction",
+        }
+        if table_exists(conn, "offline_test_results") and offline_series.intersection(shown_series):
             offline_df = pd.read_sql_query(
                 f"""
-                SELECT timestamp, sensor_id, pollutant, actual_value, predicted_value
+                SELECT
+                    timestamp,
+                    sensor_id,
+                    pollutant,
+                    actual_value,
+                    predicted_value,
+                    CASE
+                        WHEN predicted_value IS NULL THEN 'train'
+                        ELSE 'test'
+                    END AS split
                 FROM offline_test_results
                 WHERE city = ?
                   AND timestamp BETWEEN ? AND ?
@@ -266,19 +271,35 @@ def load_historical_rows(
                 params=(CITY, start_at, end_at, *pollutants, *sensor_ids),
             )
             if not offline_df.empty:
-                if "Actual" in shown_series:
-                    actual_df = offline_df[["timestamp", "sensor_id", "pollutant", "actual_value"]].rename(
+                if "Offline train actual" in shown_series:
+                    actual_df = offline_df[offline_df["split"] == "train"][
+                        ["timestamp", "sensor_id", "pollutant", "actual_value", "split"]
+                    ].rename(
                         columns={"actual_value": "value"}
                     )
-                    actual_df["series"] = "Actual"
-                    frames.append(actual_df)
+                    if not actual_df.empty:
+                        actual_df["series"] = "Offline train actual"
+                        frames.append(actual_df)
+
+                if "Offline test actual" in shown_series:
+                    actual_df = offline_df[offline_df["split"] == "test"][
+                        ["timestamp", "sensor_id", "pollutant", "actual_value", "split"]
+                    ].rename(
+                        columns={"actual_value": "value"}
+                    )
+                    if not actual_df.empty:
+                        actual_df["series"] = "Offline test actual"
+                        frames.append(actual_df)
 
                 if "Offline test prediction" in shown_series:
-                    predicted_df = offline_df[["timestamp", "sensor_id", "pollutant", "predicted_value"]].rename(
+                    predicted_df = offline_df[offline_df["predicted_value"].notna()][
+                        ["timestamp", "sensor_id", "pollutant", "predicted_value", "split"]
+                    ].rename(
                         columns={"predicted_value": "value"}
                     )
-                    predicted_df["series"] = "Offline test prediction"
-                    frames.append(predicted_df)
+                    if not predicted_df.empty:
+                        predicted_df["series"] = "Offline test prediction"
+                        frames.append(predicted_df)
 
         if (
             "Online forecast" in shown_series
@@ -319,47 +340,30 @@ def load_historical_rows(
                 online_df["model_label"] = online_df["model_version"].map(online_model_label)
                 online_df = online_df.rename(columns={"predicted_value": "value"})
                 online_df["series"] = "Online forecast - " + online_df["model_label"]
-                frames.append(online_df[["timestamp", "sensor_id", "pollutant", "value", "series"]])
+                online_df["split"] = "online"
+                frames.append(online_df[["timestamp", "sensor_id", "pollutant", "value", "series", "split"]])
 
-        if "Online measurement" in shown_series and table_exists(conn, "online_sensor_weather_features"):
-            measurement_frames = []
-            if "pm10" in pollutants:
-                measurement_frames.append(
-                    pd.read_sql_query(
-                        f"""
-                        SELECT timestamp, sensor_id, 'pm10' AS pollutant, pm10 AS value
-                        FROM online_sensor_weather_features
-                        WHERE city = ?
-                          AND timestamp BETWEEN ? AND ?
-                          AND sensor_id IN ({sql_placeholders(sensor_ids)})
-                          AND pm10 IS NOT NULL
-                        ORDER BY timestamp, sensor_id
-                        """,
-                        conn,
-                        params=(CITY, start_at, end_at, *sensor_ids),
-                    )
-                )
-            if "pm25" in pollutants:
-                measurement_frames.append(
-                    pd.read_sql_query(
-                        f"""
-                        SELECT timestamp, sensor_id, 'pm25' AS pollutant, pm25 AS value
-                        FROM online_sensor_weather_features
-                        WHERE city = ?
-                          AND timestamp BETWEEN ? AND ?
-                          AND sensor_id IN ({sql_placeholders(sensor_ids)})
-                          AND pm25 IS NOT NULL
-                        ORDER BY timestamp, sensor_id
-                        """,
-                        conn,
-                        params=(CITY, start_at, end_at, *sensor_ids),
-                    )
-                )
-
-            measurement_frames = [frame for frame in measurement_frames if not frame.empty]
-            if measurement_frames:
-                measurement_df = pd.concat(measurement_frames, ignore_index=True)
+        if "Online measurement" in shown_series and table_exists(conn, ONLINE_RAW_MEASUREMENTS_TABLE):
+            measurement_df = pd.read_sql_query(
+                f"""
+                SELECT
+                    timestamp_utc AS timestamp,
+                    sensor_id,
+                    measurement_type AS pollutant,
+                    value
+                FROM {ONLINE_RAW_MEASUREMENTS_TABLE}
+                WHERE city = ?
+                  AND timestamp_utc BETWEEN ? AND ?
+                  AND measurement_type IN ({sql_placeholders(pollutants)})
+                  AND sensor_id IN ({sql_placeholders(sensor_ids)})
+                ORDER BY timestamp_utc, sensor_id, measurement_type
+                """,
+                conn,
+                params=(CITY, start_at, end_at, *pollutants, *sensor_ids),
+            )
+            if not measurement_df.empty:
                 measurement_df["series"] = "Online measurement"
+                measurement_df["split"] = "online"
                 frames.append(measurement_df)
 
     if not frames:
@@ -369,6 +373,8 @@ def load_historical_rows(
     result["timestamp"] = pd.to_datetime(result["timestamp"], errors="coerce")
     result["sensor_id"] = result["sensor_id"].astype(str)
     result["value"] = pd.to_numeric(result["value"], errors="coerce")
+    if "split" not in result.columns:
+        result["split"] = pd.NA
     return result.dropna(subset=["timestamp", "value"]).sort_values("timestamp")
 
 
@@ -440,11 +446,23 @@ def render_historical_results():
     start_at = datetime.combine(start_date, time.min).strftime("%Y-%m-%d %H:%M:%S")
     end_at = datetime.combine(end_date, time.max).strftime("%Y-%m-%d %H:%M:%S")
 
-    series_options = ["Actual", "Offline test prediction", "Online measurement", "Online forecast"]
+    series_options = [
+        "Offline train actual",
+        "Offline test actual",
+        "Offline test prediction",
+        "Online measurement",
+        "Online forecast",
+    ]
     selected_series = st.multiselect(
         "Show series",
         options=series_options,
-        default=["Actual", "Offline test prediction", "Online measurement", "Online forecast"],
+        default=[
+            "Offline train actual",
+            "Offline test actual",
+            "Offline test prediction",
+            "Online measurement",
+            "Online forecast",
+        ],
     )
 
     issue_hour_options = load_online_issue_hour_options(
@@ -532,7 +550,7 @@ def render_historical_results():
 
     with st.expander("Historical rows"):
         st.dataframe(
-            historical_df[["timestamp", "sensor_id", "pollutant", "series", "value"]].tail(200),
+            historical_df[["timestamp", "sensor_id", "pollutant", "split", "series", "value"]].tail(200),
             width="stretch",
         )
 
