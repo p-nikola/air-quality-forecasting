@@ -1,19 +1,17 @@
 Beginning AutoGluon training... Time limit = 300s
-AutoGluon will save models to '/mnt/c/Users/RazorVision/Desktop/project-vrnmp/offline-Phase/AutogluonModels/ag-20260706_155437'
+AutoGluon will save models to '/Users/jovan/Documents/Kodovi/RNMP/Project/Offline-Phase/AutogluonModels/ag-20260712_092854'
 =================== System Info ===================
 AutoGluon Version:  1.5.0
-Python Version:     3.10.12
-Operating System:   Linux
-Platform Machine:   x86_64
-Platform Version:   #1 SMP PREEMPT_DYNAMIC Thu Jun  5 18:30:46 UTC 2025
-CPU Count:          16
-Pytorch Version:    2.9.1+cu128
-CUDA Version:       12.8
-GPU Memory:         GPU 0: 11.99/12.00 GB
-Total GPU Memory:   Free: 11.99 GB, Allocated: 0.01 GB, Total: 12.00 GB
-GPU Count:          1
-Memory Avail:       9.71 GB / 15.58 GB (62.3%)
-Disk Space Avail:   21.08 GB / 464.89 GB (4.5%)
+Python Version:     3.11.9
+Operating System:   Darwin
+Platform Machine:   arm64
+Platform Version:   Darwin Kernel Version 25.3.0: Wed Jan 28 20:54:55 PST 2026; root:xnu-12377.91.3~2/RELEASE_ARM64_T8132
+CPU Count:          10
+Pytorch Version:    2.9.1
+CUDA Version:       CUDA is not available
+GPU Count:          WARNING: Exception was raised when calculating GPU count (AssertionError)
+Memory Avail:       7.41 GB / 16.00 GB (46.3%)
+Disk Space Avail:   92.46 GB / 228.27 GB (40.5%)
 ===================================================
 Setting presets to: chronos2
 
@@ -21,7 +19,31 @@ Fitting with arguments:
 {'enable_ensemble': True,
  'eval_metric': MASE,
  'hyperparameters': {'Chronos2': {'model_path': 'autogluon/chronos-2'}},
- 'known_covariates_names': [],
+ 'known_covariates_names': ['humidity',
+                            'pressure',
+                            'temperature',
+                            'wind_speed',
+                            'neighbor1_humidity',
+                            'neighbor2_humidity',
+                            'neighbor3_humidity',
+                            'neighbor1_pressure',
+                            'neighbor2_pressure',
+                            'neighbor3_pressure',
+                            'neighbor1_temperature',
+                            'neighbor2_temperature',
+                            'neighbor3_temperature',
+                            'neighbor1_wind_speed',
+                            'neighbor2_wind_speed',
+                            'neighbor3_wind_speed',
+                            'season',
+                            'hour_sin',
+                            'hour_cos',
+                            'month_sin',
+                            'month_cos',
+                            'day_sin',
+                            'day_cos',
+                            'is_weekend',
+                            'is_heating_season'],
  'num_val_windows': 1,
  'prediction_length': 512,
  'quantile_levels': [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9],
@@ -34,13 +56,16 @@ Fitting with arguments:
  'verbosity': 2}
 
 Inferred time series frequency: 'h'
-Provided train_data has 187352 rows (NaN fraction=23.0%), 11 time series. Median time series length is 17032 (min=17032, max=17032). 
+Provided train_data has 187352 rows (NaN fraction=26.6%), 11 time series. Median time series length is 17032 (min=17032, max=17032). 
 
 Provided data contains following columns:
 	target: 'pm25'
+	known_covariates:
+		categorical:        ['season']
+		continuous (float): ['humidity', 'pressure', 'temperature', 'wind_speed', 'neighbor1_humidity', 'neighbor2_humidity', ...]
 	past_covariates:
-		categorical:        ['city']
-		continuous (float): ['humidity', 'pm10', 'pressure', 'temperature', 'wind_speed', 'neighbor1_humidity', ...]
+		categorical:        []
+		continuous (float): ['pm10']
 
 To learn how to fix incorrectly inferred types, please see documentation for TimeSeriesPredictor.fit
 
@@ -48,12 +73,12 @@ AutoGluon will gauge predictive performance using evaluation metric: 'MASE'
 	This metric's sign has been flipped to adhere to being higher_is_better. The metric score can be multiplied by -1 to get the metric value.
 ===================================================
 
-Starting training. Start time is 2026-07-06 17:54:37
+Starting training. Start time is 2026-07-12 11:28:59
 Models that will be trained: ['Chronos2']
-Training timeseries model Chronos2. Training for up to 299.8s of the 299.8s of remaining time.
-	1.38    s     = Training runtime
+Training timeseries model Chronos2. Training for up to 299.3s of the 299.3s of remaining time.
+	2.38    s     = Training runtime
 Training complete. Models trained: ['Chronos2']
-Total runtime: 1.53 s
+Total runtime: 2.39 s
 Best model: Chronos2
 Model not specified in predict, will default to the model with the best validation score: Chronos2
 Model not specified in predict, will default to the model with the best validation score: Chronos2
