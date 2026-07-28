@@ -12,7 +12,7 @@ do
     --replication-factor 1
 done
 
-awk -F',' 'NR>1 {print $2}' data/raw/bitola_sensor_weather_features_online.csv | sort -u | while read id
+awk -F',' 'NR>1 {print $2}' bitola/data/streaming/bitola_sensor_weather_features_online_short_gap_interpolated.csv | sort -u | while read id
 do
   topic="sensor_$id"
 

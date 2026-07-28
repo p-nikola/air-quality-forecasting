@@ -12,7 +12,8 @@ KAFKA_BOOTSTRAP_SERVERS = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092")
 KAFKA_GROUP_ID = os.getenv("BITOLA_FORECAST_DB_GROUP_ID", f"bitola_forecast_db_consumer_cacko")
 KAFKA_AUTO_OFFSET_RESET = os.getenv("KAFKA_AUTO_OFFSET_RESET", "latest")
 BASE_DIR = Path(__file__).resolve().parents[2]
-DB_PATH = Path(os.getenv("PROJECT_DB_PATH", str(BASE_DIR / "data" / "project.db"))).expanduser()
+BITOLA_DIR = Path(os.getenv("BITOLA_PROJECT_DIR", str(BASE_DIR / "bitola"))).expanduser()
+DB_PATH = Path(os.getenv("PROJECT_DB_PATH", str(BITOLA_DIR / "data" / "project.db"))).expanduser()
 CITY = "Bitola"
 BATCH_SIZE = int(os.getenv("BITOLA_DB_CONSUMER_BATCH_SIZE", "1000"))
 

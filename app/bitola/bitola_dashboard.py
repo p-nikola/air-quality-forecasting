@@ -14,7 +14,8 @@ st.set_page_config(page_title="Bitola Air Quality Dashboard", layout="wide")
 st.title("Bitola Air Quality Dashboard")
 
 BASE_DIR = Path(__file__).resolve().parents[2]
-DB_PATH = Path(os.getenv("PROJECT_DB_PATH", str(BASE_DIR / "data" / "project.db"))).expanduser()
+BITOLA_DIR = Path(os.getenv("BITOLA_PROJECT_DIR", str(BASE_DIR / "bitola"))).expanduser()
+DB_PATH = Path(os.getenv("PROJECT_DB_PATH", str(BITOLA_DIR / "data" / "project.db"))).expanduser()
 CITY = "Bitola"
 SQLITE_BUSY_TIMEOUT_MS = 30000
 ONLINE_RAW_MEASUREMENTS_TABLE = "online_raw_measurements"

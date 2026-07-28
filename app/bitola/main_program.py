@@ -15,10 +15,11 @@ from pyspark.sql.types import FloatType, StringType, StructField, StructType, Ti
 KAFKA_BOOTSTRAP_SERVERS = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092")
 KAFKA_STARTING_OFFSETS = os.getenv("KAFKA_STARTING_OFFSETS", "latest")
 BASE_DIR = Path(__file__).resolve().parents[2]
-OFFLINE_DIR = BASE_DIR / "offline-Phase"
+BITOLA_DIR = Path(os.getenv("BITOLA_PROJECT_DIR", str(BASE_DIR / "bitola"))).expanduser()
+OFFLINE_DIR = BITOLA_DIR / "offline-Phase"
 DEFAULT_CONTEXT_PATH = Path(__file__).resolve().parent / "context_bitola.csv"
 CONTEXT_PATH = Path(os.getenv("BITOLA_CONTEXT_CSV_PATH", str(DEFAULT_CONTEXT_PATH))).expanduser()
-DEFAULT_FORECAST_PATH = BASE_DIR / "data" / "raw" / "bitola_forecast_weather.csv"
+DEFAULT_FORECAST_PATH = BITOLA_DIR / "data" / "raw" / "bitola_forecast_weather.csv"
 FORECAST_PATH = Path(os.getenv("BITOLA_FORECAST_CSV_PATH", str(DEFAULT_FORECAST_PATH))).expanduser()
 ZERO_SHOT_DIR = Path(
     os.getenv("BITOLA_ZERO_SHOT_MODEL_PATH", str(OFFLINE_DIR / "chronos2_zero_shot"))
@@ -157,7 +158,7 @@ def append_neighbors(df_hourly, neighbors_df, weather_cols=["humidity", "pressur
     return df_result
 
 
-NEIGHBORS_PATH = BASE_DIR / "data" / "neighbors_data" / "bitola_sensor_distances.csv"
+NEIGHBORS_PATH = BITOLA_DIR / "data" / "neighbors_data" / "bitola_sensor_distances.csv"
 print("Neighbors path:", NEIGHBORS_PATH)
 print("Exists:", NEIGHBORS_PATH.exists())
 neighbourhood_matrix = pd.read_csv(NEIGHBORS_PATH)

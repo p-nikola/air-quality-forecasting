@@ -9,9 +9,9 @@ __pycache__
 *.ipynb_checkpoints
 
 # Large datasets and artifacts are mounted at runtime, not needed in image build context
-data
-offline-Phase
-notebooks
+bitola/data
+bitola/offline-Phase
+bitola/notebooks
 
 # Local/runtime outputs
 *.log
