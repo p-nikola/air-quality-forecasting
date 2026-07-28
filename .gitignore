@@ -9,6 +9,7 @@ data/training/*
 !data/streaming/bitola_sensor_weather_features_online.csv
 !data/streaming/bitola_sensor_weather_features_online.csv
 !data/streaming/bitola_sensor_weather_features_online_hourly_nan.csv
+!data/streaming/bitola_sensor_weather_features_online_short_gap_interpolated.csv
 
 .env
 venv

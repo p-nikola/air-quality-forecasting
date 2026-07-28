@@ -67,6 +67,26 @@ def online_model_label(model_version):
     return str(model_version)
 
 
+def offline_model_label(model_version):
+    model_version = str(model_version or "").lower()
+    if "zero_shot" in model_version or "zero-shot" in model_version:
+        return "Zero-shot"
+    return "Fine-tuned"
+
+
+def plot_color_group(series):
+    if series == "Online measurement":
+        return "Online measurement"
+    if series == "Online forecast - Fine-tuned":
+        return "Online forecast - Fine-tuned"
+    if series == "Online forecast - Zero-shot":
+        return "Online forecast - Zero-shot"
+    if series == "Offline test prediction - Fine-tuned":
+        return "Offline test prediction - Fine-tuned"
+    if series == "Offline test prediction - Zero-shot":
+        return "Offline test prediction - Zero-shot"
+    return series
+
 def sql_placeholders(values):
     return ",".join("?" for _ in values)
 
@@ -243,8 +263,8 @@ def load_historical_rows(
 
     with closing(connect_db(db_file)) as conn:
         offline_series = {
-            "Offline train actual",
-            "Offline test actual",
+            "Offline train measurement",
+            "Offline test measurement",
             "Offline test prediction",
         }
         if table_exists(conn, "offline_test_results") and offline_series.intersection(shown_series):
@@ -256,6 +276,7 @@ def load_historical_rows(
                     pollutant,
                     actual_value,
                     predicted_value,
+                    model_version,
                     CASE
                         WHEN predicted_value IS NULL THEN 'train'
                         ELSE 'test'
@@ -271,35 +292,41 @@ def load_historical_rows(
                 params=(CITY, start_at, end_at, *pollutants, *sensor_ids),
             )
             if not offline_df.empty:
-                if "Offline train actual" in shown_series:
+                if "Offline train measurement" in shown_series:
                     actual_df = offline_df[offline_df["split"] == "train"][
                         ["timestamp", "sensor_id", "pollutant", "actual_value", "split"]
                     ].rename(
                         columns={"actual_value": "value"}
                     )
                     if not actual_df.empty:
-                        actual_df["series"] = "Offline train actual"
+                        actual_df["series"] = "Offline train measurement"
                         frames.append(actual_df)
 
-                if "Offline test actual" in shown_series:
+                if "Offline test measurement" in shown_series:
                     actual_df = offline_df[offline_df["split"] == "test"][
                         ["timestamp", "sensor_id", "pollutant", "actual_value", "split"]
                     ].rename(
                         columns={"actual_value": "value"}
                     )
                     if not actual_df.empty:
-                        actual_df["series"] = "Offline test actual"
+                        actual_df["series"] = "Offline test measurement"
                         frames.append(actual_df)
 
                 if "Offline test prediction" in shown_series:
                     predicted_df = offline_df[offline_df["predicted_value"].notna()][
-                        ["timestamp", "sensor_id", "pollutant", "predicted_value", "split"]
+                        ["timestamp", "sensor_id", "pollutant", "predicted_value", "model_version", "split"]
                     ].rename(
                         columns={"predicted_value": "value"}
                     )
                     if not predicted_df.empty:
-                        predicted_df["series"] = "Offline test prediction"
-                        frames.append(predicted_df)
+                        predicted_df["model_label"] = predicted_df["model_version"].map(offline_model_label)
+                        if online_models:
+                            predicted_df = predicted_df[predicted_df["model_label"].isin(online_models)]
+                        if not predicted_df.empty:
+                            predicted_df["series"] = "Offline test prediction - " + predicted_df["model_label"]
+                            frames.append(
+                                predicted_df[["timestamp", "sensor_id", "pollutant", "value", "series", "split"]]
+                            )
 
         if (
             "Online forecast" in shown_series
@@ -447,8 +474,8 @@ def render_historical_results():
     end_at = datetime.combine(end_date, time.max).strftime("%Y-%m-%d %H:%M:%S")
 
     series_options = [
-        "Offline train actual",
-        "Offline test actual",
+        "Offline train measurement",
+        "Offline test measurement",
         "Offline test prediction",
         "Online measurement",
         "Online forecast",
@@ -457,8 +484,8 @@ def render_historical_results():
         "Show series",
         options=series_options,
         default=[
-            "Offline train actual",
-            "Offline test actual",
+            "Offline train measurement",
+            "Offline test measurement",
             "Offline test prediction",
             "Online measurement",
             "Online forecast",
@@ -474,40 +501,55 @@ def render_historical_results():
     )
     selected_online_issue_hour = None
     selected_online_models = []
+    model_filter_needed = (
+        "Offline test prediction" in selected_series
+        or "Online forecast" in selected_series
+    )
 
-    if "Online forecast" in selected_series:
-        if issue_hour_options:
+    if model_filter_needed:
+        if "Online forecast" in selected_series and issue_hour_options:
             default_issue_hour_index = issue_hour_options.index("12:00") if "12:00" in issue_hour_options else 0
-            online_col1, online_col2 = st.columns([1, 1])
-            with online_col1:
+            forecast_col1, forecast_col2 = st.columns([1, 1])
+            with forecast_col1:
                 selected_online_issue_hour = st.selectbox(
                     "Online forecast issue time",
                     options=issue_hour_options,
                     index=default_issue_hour_index,
                     help="Shows 24-hour forecast cycles issued at this hour for each day in the selected range.",
                 )
-            with online_col2:
+            with forecast_col2:
                 selected_online_models = st.multiselect(
-                    "Online forecast model",
+                    "Forecast model",
                     options=["Fine-tuned", "Zero-shot"],
                     default=["Fine-tuned"],
                 )
         else:
-            st.caption("No online forecast issue times found for this selection. Showing offline rows only.")
+            selected_online_models = st.multiselect(
+                "Forecast model",
+                options=["Fine-tuned", "Zero-shot"],
+                default=["Fine-tuned"],
+            )
+            if "Online forecast" in selected_series and not issue_hour_options:
+                st.caption("No online forecast issue times found for this selection. Showing offline rows only.")
 
     if not selected_series:
         st.warning("Select at least one series to plot.")
         return
 
     effective_series = list(selected_series)
+    if "Offline test prediction" in effective_series and not selected_online_models:
+        effective_series = [
+            series for series in effective_series if series != "Offline test prediction"
+        ]
+
     if "Online forecast" in effective_series and (selected_online_issue_hour is None or not selected_online_models):
         effective_series = [
             series for series in effective_series if series != "Online forecast"
         ]
 
-        if not effective_series:
-            st.info("No online forecasts match this selection.")
-            return
+    if not effective_series:
+        st.info("No forecast rows match this selection.")
+        return
 
     if selected_online_issue_hour is not None:
         st.caption(
@@ -537,12 +579,25 @@ def render_historical_results():
         + historical_df["series"]
     )
 
+    historical_df["color_group"] = historical_df["series"].map(plot_color_group)
+
+    color_map = {
+        "Offline train measurement": "#9CA3AF",
+        "Offline test measurement": "#F97316",
+        "Offline test prediction - Fine-tuned": "#2563EB",
+        "Offline test prediction - Zero-shot": "#7C3AED",
+        "Online measurement": "#EF4444",
+        "Online forecast - Fine-tuned": "#14B8A6",
+        "Online forecast - Zero-shot": "#A855F7",
+    }
+
     fig = px.line(
         historical_df,
         x="timestamp",
         y="value",
-        color="label",
-        line_dash="series",
+        color="color_group",
+        color_discrete_map=color_map,
+        line_dash="label",
         markers=True,
         title="Historical measurements and model predictions",
     )

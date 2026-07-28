@@ -1,13 +1,14 @@
-CREATE TABLE offline_test_results (
-    city TEXT NOT NULL,
-    sensor_id TEXT NOT NULL,
-    timestamp TEXT NOT NULL,
-    pollutant TEXT NOT NULL,
-    actual_value REAL,
-    predicted_value REAL,
-    model_version TEXT,
-    PRIMARY KEY (city, sensor_id, timestamp, pollutant)
-);
+ CREATE TABLE IF NOT EXISTS offline_test_results (
+            city TEXT NOT NULL,
+            sensor_id TEXT NOT NULL,
+            timestamp TEXT NOT NULL,
+            pollutant TEXT NOT NULL,
+            actual_value REAL,
+            predicted_value REAL,
+            model_version TEXT NOT NULL,
+            model_type TEXT NOT NULL,
+            PRIMARY KEY (city, sensor_id, timestamp, pollutant, model_version)
+        );
 
 
  CREATE TABLE IF NOT EXISTS online_forecasts (

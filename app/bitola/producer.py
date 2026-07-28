@@ -12,7 +12,7 @@ def nullable_float(value):
 if __name__ == "__main__":
 
     base_dir = Path(__file__).resolve().parents[2]
-    default_data_path = base_dir / "data" / "streaming" / "bitola_sensor_weather_features_online_hourly_nan.csv"
+    default_data_path = base_dir / "data" / "streaming" / "bitola_sensor_weather_features_online_short_gap_interpolated.csv"
     data_path = Path(os.getenv("BITOLA_DATA_CSV_PATH", str(default_data_path))).expanduser()
 
     if not data_path.exists():

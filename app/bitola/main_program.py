@@ -71,6 +71,17 @@ def ensure_city_column(df):
 
 
 def extract_time_features(df, timestamp_col="timestamp"):
+    month = df[timestamp_col].dt.month
+    df["season"] = np.select(
+        [
+            month.isin([12, 1, 2]),
+            month.isin([3, 4, 5]),
+            month.isin([6, 7, 8]),
+            month.isin([9, 10, 11]),
+        ],
+        ["winter", "spring", "summer", "autumn"],
+    )
+
     df["hour_sin"] = np.sin(2 * np.pi * df[timestamp_col].dt.hour / 24)
     df["hour_cos"] = np.cos(2 * np.pi * df[timestamp_col].dt.hour / 24)
 
@@ -155,7 +166,9 @@ neighbourhood_matrix = pd.read_csv(NEIGHBORS_PATH)
 def load_context():
     context_df = pd.read_csv(CONTEXT_PATH)
     context_df = ensure_city_column(context_df)
-    context_df["timestamp"] = pd.to_datetime(context_df["timestamp"])
+    context_df["timestamp"] = pd.to_datetime(context_df["timestamp"], utc=True)
+    context_df["sensorId"] = context_df["sensorId"].astype(str)
+    context_df = extract_time_features(context_df)
     return context_df
 
 
@@ -214,7 +227,40 @@ def predict_target_fine_tuned(pdf, context_df, target, predictor, id_col, time_c
         id_column=id_col,
         timestamp_column=time_col,
     )
-    predictions = predictor.predict(data, use_cache=False)
+
+    future_structure = predictor.make_future_data_frame(data).reset_index()
+    future_features = pdf.copy()
+    future_features[id_col] = future_features[id_col].astype(str)
+    future_features[time_col] = pd.to_datetime(future_features[time_col], utc=True).dt.tz_convert(None)
+
+    known_covariates = future_structure.merge(
+        future_features,
+        left_on=["item_id", time_col],
+        right_on=[id_col, time_col],
+        how="left",
+    )
+    known_covariates[id_col] = known_covariates["item_id"].astype(str)
+
+    covariate_columns = [
+        column
+        for column in future_features.columns
+        if column not in {id_col, time_col, "forecast_origin", "horizon_hours", target}
+    ]
+    for column in covariate_columns:
+        if column in known_covariates.columns:
+            known_covariates[column] = known_covariates.groupby("item_id")[column].ffill().bfill()
+
+    known_covariates_ts = TimeSeriesDataFrame.from_data_frame(
+        known_covariates,
+        id_column="item_id",
+        timestamp_column=time_col,
+    )
+
+    predictions = predictor.predict(
+        data=data,
+        known_covariates=known_covariates_ts,
+        use_cache=False,
+    )
     forecast_df = predictions.to_data_frame()
 
     if isinstance(forecast_df.index, pd.MultiIndex):
@@ -300,6 +346,8 @@ def process_batch(pdf, context_df):
     time_col = "timestamp"
     numeric_features = [
         'humidity', 'pressure', 'temperature', 'wind_speed',
+        'season', 'hour_sin', 'hour_cos', 'month_sin', 'month_cos',
+        'day_sin', 'day_cos', 'is_weekend', 'is_heating_season',
         'neighbor1_humidity', 'neighbor2_humidity', 'neighbor3_humidity',
         'neighbor1_pressure', 'neighbor2_pressure', 'neighbor3_pressure',
         'neighbor1_temperature', 'neighbor2_temperature', 'neighbor3_temperature',

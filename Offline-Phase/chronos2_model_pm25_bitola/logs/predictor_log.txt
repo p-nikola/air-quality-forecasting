@@ -1,17 +1,19 @@
 Beginning AutoGluon training... Time limit = 300s
-AutoGluon will save models to '/Users/jovan/Documents/Kodovi/RNMP/Project/Offline-Phase/AutogluonModels/ag-20260712_092854'
+AutoGluon will save models to '/mnt/c/Users/RazorVision/Desktop/project-vrnmp/offline-Phase/AutogluonModels/ag-20260715_115729'
 =================== System Info ===================
 AutoGluon Version:  1.5.0
-Python Version:     3.11.9
-Operating System:   Darwin
-Platform Machine:   arm64
-Platform Version:   Darwin Kernel Version 25.3.0: Wed Jan 28 20:54:55 PST 2026; root:xnu-12377.91.3~2/RELEASE_ARM64_T8132
-CPU Count:          10
-Pytorch Version:    2.9.1
-CUDA Version:       CUDA is not available
-GPU Count:          WARNING: Exception was raised when calculating GPU count (AssertionError)
-Memory Avail:       7.41 GB / 16.00 GB (46.3%)
-Disk Space Avail:   92.46 GB / 228.27 GB (40.5%)
+Python Version:     3.10.12
+Operating System:   Linux
+Platform Machine:   x86_64
+Platform Version:   #1 SMP PREEMPT_DYNAMIC Thu Jun  5 18:30:46 UTC 2025
+CPU Count:          16
+Pytorch Version:    2.9.1+cu128
+CUDA Version:       12.8
+GPU Memory:         GPU 0: 12.00/12.00 GB
+Total GPU Memory:   Free: 12.00 GB, Allocated: 0.00 GB, Total: 12.00 GB
+GPU Count:          1
+Memory Avail:       2.49 GB / 15.58 GB (16.0%)
+Disk Space Avail:   46.54 GB / 464.89 GB (10.0%)
 ===================================================
 Setting presets to: chronos2
 
@@ -73,12 +75,12 @@ AutoGluon will gauge predictive performance using evaluation metric: 'MASE'
 	This metric's sign has been flipped to adhere to being higher_is_better. The metric score can be multiplied by -1 to get the metric value.
 ===================================================
 
-Starting training. Start time is 2026-07-12 11:28:59
+Starting training. Start time is 2026-07-15 13:57:52
 Models that will be trained: ['Chronos2']
-Training timeseries model Chronos2. Training for up to 299.3s of the 299.3s of remaining time.
-	2.38    s     = Training runtime
+Training timeseries model Chronos2. Training for up to 276.8s of the 276.8s of remaining time.
+	41.11   s     = Training runtime
 Training complete. Models trained: ['Chronos2']
-Total runtime: 2.39 s
+Total runtime: 41.30 s
 Best model: Chronos2
 Model not specified in predict, will default to the model with the best validation score: Chronos2
 Model not specified in predict, will default to the model with the best validation score: Chronos2
