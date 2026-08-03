@@ -1,3 +1,10 @@
+
+skopje/data/training/*
+
+skopje/offline-Phase/chronos2_model_pm10_skopje/*
+skopje/offline-Phase/chronos2_model_pm25_skopje/*
+skopje/offline-Phase/chronos2_zero_shot/*
+
 bitola/data/raw/pulse_data/
 bitola/data/raw/Wind_data/
 bitola/data/streaming/*
