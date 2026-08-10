@@ -4,6 +4,7 @@ skopje/data/training/*
 skopje/offline-Phase/chronos2_model_pm10_skopje/*
 skopje/offline-Phase/chronos2_model_pm25_skopje/*
 skopje/offline-Phase/chronos2_zero_shot/*
+skopje/offline-Phase/AutogluonModels
 
 bitola/data/raw/pulse_data/
 bitola/data/raw/Wind_data/
@@ -36,3 +37,10 @@ bitola/offline-Phase/AutogluonModels/
 bitola/data/project.db
 bitola/data/project.db-shm
 bitola/data/project.db-wal
+
+skopje/data/streaming/skopje_sensor_weather_features_online_short_gap_interpolated.csv
+common/notebooks/pulse_data
+skopje/data/project1.db
+skopje/data/project1.db-shm
+skopje/data/project1.db-wal
+skopje/data/skopje_features.csv

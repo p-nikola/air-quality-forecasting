@@ -1,12 +1,39 @@
 from pathlib import Path
+import os
 
 import pandas as pd
+from dotenv import load_dotenv
 
 
-BASE_DIR = Path(__file__).resolve().parents[1]
-PULSE_DATA_DIR = Path(__file__).resolve().parent / "pulse_data"
-ONLINE_WEATHER_PATH = BASE_DIR / "data" / "raw" / "bitola_sensor_weather_features_online.csv"
-ONLINE_START = pd.Timestamp("2025-12-01 00:00:00", tz="UTC")
+REPO_ROOT = Path(__file__).resolve().parents[1]
+COMMON_DIR = Path(__file__).resolve().parent
+
+load_dotenv(REPO_ROOT / ".env")
+load_dotenv(COMMON_DIR / ".env", override=True)
+
+
+def env_path(name, default):
+    path = Path(os.getenv(name, str(default))).expanduser()
+    if not path.is_absolute():
+        path = REPO_ROOT / path
+    return path.resolve()
+
+
+def env_timestamp(name, default):
+    return pd.to_datetime(os.getenv(name, default), utc=True)
+
+
+PULSE_DATA_DIR = env_path("PULSE_DATA_DIR", COMMON_DIR / "notebooks" / "pulse_data")
+ONLINE_WEATHER_PATH = env_path(
+    "ONLINE_WEATHER_PATH",
+    REPO_ROOT / "skopje" / "data" / "streaming" / "skopje_sensor_weather_features_online.csv",
+)
+OUTPUT_WEATHER_PATH = env_path(
+    "OUTPUT_WEATHER_PATH",
+    REPO_ROOT / "skopje" / "data" / "streaming" / "skopje_sensor_weather_features_online_with_pm.csv",
+)
+ONLINE_START = env_timestamp("ONLINE_START", "2025-12-01 00:00:00")
+INTERPOLATION_LIMIT = int(os.getenv("INTERPOLATION_LIMIT", "3"))
 
 POLLUTANTS = ["pm10", "pm25"]
 
@@ -73,7 +100,13 @@ def add_pollution_to_online_weather():
             merged
             .sort_values(["sensorId", "timestamp"])
             .groupby("sensorId")[pollutant]
-            .transform(lambda values: values.interpolate(method="linear", limit=3, limit_direction="both"))
+            .transform(
+                lambda values: values.interpolate(
+                    method="linear",
+                    limit=INTERPOLATION_LIMIT,
+                    limit_direction="both",
+                )
+            )
         )
 
         hourly_median = merged.groupby("timestamp")[pollutant].transform("median")
@@ -97,8 +130,10 @@ def add_pollution_to_online_weather():
     print(f"PM10 missing rows: {merged['pm10'].isna().sum()}")
     print(f"PM2.5 missing rows: {merged['pm25'].isna().sum()}")
 
-    merged.to_csv(ONLINE_WEATHER_PATH, index=False)
-    print(f"Updated {ONLINE_WEATHER_PATH}")
+    OUTPUT_WEATHER_PATH.parent.mkdir(parents=True, exist_ok=True)
+    merged.to_csv(OUTPUT_WEATHER_PATH, index=False)
+    print(f"Read online weather from {ONLINE_WEATHER_PATH}")
+    print(f"Wrote updated weather to {OUTPUT_WEATHER_PATH}")
 
 
 if __name__ == "__main__":

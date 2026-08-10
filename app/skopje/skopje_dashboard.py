@@ -9,27 +9,27 @@ if str(BASE_DIR) not in sys.path:
 from app.dashboard import DashboardConfig, render_dashboard
 
 
-BITOLA_DIR = Path(os.getenv("BITOLA_PROJECT_DIR", str(BASE_DIR / "bitola"))).expanduser()
+SKOPJE_DIR = Path(os.getenv("SKOPJE_PROJECT_DIR", str(BASE_DIR / "skopje"))).expanduser()
 
 
 def get_dashboard_config():
     return DashboardConfig(
-        city="Bitola",
-        db_path=Path(os.getenv("PROJECT_DB_PATH", str(BITOLA_DIR / "data" / "project.db"))).expanduser(),
-        page_title="Bitola Air Quality Dashboard",
+        city="Skopje",
+        db_path=Path(os.getenv("PROJECT_DB_PATH", str(SKOPJE_DIR / "data" / "project1.db"))).expanduser(),
+        page_title="Skopje Air Quality Dashboard",
         online_model_versions=(
             (
                 "Fine-tuned",
                 (
-                    "chronos2_pm10_bitola_fine_tuned_24h",
-                    "chronos2_pm25_bitola_fine_tuned_24h",
+                    "chronos2_pm10_skopje_fine_tuned_24h",
+                    "chronos2_pm25_skopje_fine_tuned_24h",
                 ),
             ),
             (
                 "Zero-shot",
                 (
-                    "chronos2_pm10_bitola_zero_shot_24h",
-                    "chronos2_pm25_bitola_zero_shot_24h",
+                    "chronos2_pm10_skopje_zero_shot_24h",
+                    "chronos2_pm25_skopje_zero_shot_24h",
                 ),
             ),
         ),
