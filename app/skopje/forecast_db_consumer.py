@@ -13,7 +13,7 @@ KAFKA_GROUP_ID = os.getenv("SKOPJE_FORECAST_DB_GROUP_ID", f"skopje_forecast_db_c
 KAFKA_AUTO_OFFSET_RESET = os.getenv("KAFKA_AUTO_OFFSET_RESET", "latest")
 BASE_DIR = Path(__file__).resolve().parents[2]
 SKOPJE_DIR = Path(os.getenv("SKOPJE_PROJECT_DIR", str(BASE_DIR / "skopje"))).expanduser()
-DB_PATH = Path(os.getenv("PROJECT_DB_PATH", str(SKOPJE_DIR / "data" / "project1.db"))).expanduser()
+DB_PATH = Path(os.getenv("PROJECT_DB_PATH", str(SKOPJE_DIR / "data" / "skopje.db"))).expanduser()
 CITY = "Skopje"
 BATCH_SIZE = int(os.getenv("SKOPJE_DB_CONSUMER_BATCH_SIZE", "1000"))
 

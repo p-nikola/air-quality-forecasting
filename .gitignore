@@ -34,13 +34,13 @@ model.safetensors
 .codex
 bitola/offline-Phase/AutogluonModels/
 .cache
-bitola/data/project.db
-bitola/data/project.db-shm
-bitola/data/project.db-wal
+bitola/data/bitola.db
+bitola/data/bitola.db-shm
+bitola/data/bitola.db-wal
 
 skopje/data/streaming/skopje_sensor_weather_features_online_short_gap_interpolated.csv
 common/notebooks/pulse_data
-skopje/data/project1.db
-skopje/data/project1.db-shm
-skopje/data/project1.db-wal
+skopje/data/skopje.db
+skopje/data/skopje.db-shm
+skopje/data/skopje.db-wal
 skopje/data/skopje_features.csv

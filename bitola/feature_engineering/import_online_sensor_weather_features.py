@@ -7,7 +7,7 @@ from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parents[1]
 DEFAULT_CSV_PATH = BASE_DIR / "data" / "streaming" / "bitola_sensor_weather_features_online.csv"
-DEFAULT_DB_PATH = BASE_DIR / "data" / "project.db"
+DEFAULT_DB_PATH = BASE_DIR / "data" / "bitola.db"
 DEFAULT_CITY = "Bitola"
 
 REQUIRED_COLUMNS = {

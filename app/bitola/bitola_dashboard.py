@@ -15,7 +15,7 @@ BITOLA_DIR = Path(os.getenv("BITOLA_PROJECT_DIR", str(BASE_DIR / "bitola"))).exp
 def get_dashboard_config():
     return DashboardConfig(
         city="Bitola",
-        db_path=Path(os.getenv("PROJECT_DB_PATH", str(BITOLA_DIR / "data" / "project.db"))).expanduser(),
+        db_path=Path(os.getenv("PROJECT_DB_PATH", str(BITOLA_DIR / "data" / "bitola.db"))).expanduser(),
         page_title="Bitola Air Quality Dashboard",
         online_model_versions=(
             (
